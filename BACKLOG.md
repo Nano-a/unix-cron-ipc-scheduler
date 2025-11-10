@@ -21,6 +21,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 12 novembre 2025, 18h00
 - **Branche Git** : `feature/architecture`
 - **Prérequis** : Aucun (tâche de démarrage)
+- **Responsable** : AJINOU Abderrahman
 - **Description** :
   - Définir l'architecture des modules (sérialisation, task_tree, protocole, démon, client)
   - Créer la structure des répertoires (src/, include/)
@@ -39,6 +40,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 13 novembre 2025, 18h00
 - **Branche Git** : `feature/task-tree-structure`
 - **Prérequis** : T1.1 (architecture globale)
+- **Responsable** : À assigner
 - **Description** :
   - Créer la structure de données `task_t`
   - Implémenter `init_task_directory` (création récursive des répertoires)
@@ -56,6 +58,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 12 novembre 2025, 18h00
 - **Branche Git** : `feature/serialization-integers`
 - **Prérequis** : T1.1 (architecture globale)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `write_uint8/16/32/64` avec conversion big-endian (htobe16/32/64)
   - Implémenter `read_uint8/16/32/64` avec conversion big-endian (be16toh/32toh/64toh)
@@ -73,6 +76,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 14 novembre 2025, 18h00
 - **Branche Git** : `feature/serialization-complex`
 - **Prérequis** : T1.4 (sérialisation entiers)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `write_string` et `read_string` (format : LENGTH uint32 + DATA)
   - Implémenter `write_timing` et `read_timing` (uint64 + uint32 + uint8)
@@ -90,6 +94,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 16 novembre 2025, 18h00
 - **Branche Git** : `feature/serialization-commands`
 - **Prérequis** : T1.5 (sérialisation types complexes)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `write_command` et `read_command` (récursif)
   - Gestion des commandes simples (TYPE='SI' + arguments)
@@ -108,6 +113,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 15 novembre 2025, 18h00
 - **Branche Git** : `feature/task-tree-read`
 - **Prérequis** : T1.2 (structure), T1.6 (sérialisation commandes)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `load_task_from_dir` (chargement d'une tâche complète)
   - Implémenter `load_complex_command` (récursif pour commandes complexes)
@@ -126,6 +132,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 12 novembre 2025, 18h00
 - **Branche Git** : `feature/task-tree-write`
 - **Prérequis** : T1.2 (structure), T1.6 (sérialisation commandes)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `save_task_to_dir` (sauvegarde d'une tâche complète)
   - Implémenter `save_command_to_dir` (récursif pour commandes complexes)
@@ -144,6 +151,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 17 novembre 2025, 18h00
 - **Branche Git** : `feature/execute-simple`
 - **Prérequis** : T1.7 (lecture arborescence)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `execute_simple_command`
   - Utiliser `fork()` pour créer processus enfant
@@ -164,6 +172,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 18 novembre 2025, 18h00
 - **Branche Git** : `feature/execute-sequence`
 - **Prérequis** : T1.9 (exécution commandes simples)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `execute_sequence_command`
   - Exécuter les sous-commandes séquentiellement
@@ -182,6 +191,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 20 novembre 2025, 18h00
 - **Branche Git** : `feature/daemon-loop`
 - **Prérequis** : T1.10 (exécution séquences), T1.12 (logs)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `should_execute_task` (vérification timing avec bits)
   - Utiliser `time()` et `localtime()` pour obtenir date/heure actuelle
@@ -202,6 +212,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 16 novembre 2025, 18h00
 - **Branche Git** : `feature/execution-logs`
 - **Prérequis** : T1.8 (écriture arborescence)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `append_execution_log` (ajout dans times-exitcodes)
   - Implémenter `save_stdout` et `save_stderr` (écriture fichiers)
@@ -219,6 +230,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 21 novembre 2025, 12h00
 - **Branche Git** : `integration/jalon-1`
 - **Prérequis** : T1.11 (boucle principale), T1.12 (logs), T1.7 (lecture)
+- **Responsable** : AJINOU Abderrahman
 - **Description** :
   - Tests d'intégration de toutes les fonctionnalités
   - Tests avec les exemples d'arborescences fournis
@@ -241,6 +253,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 24 novembre 2025, 18h00
 - **Branche Git** : `feature/protocol-architecture`
 - **Prérequis** : T1.3 (jalon 1 terminé)
+- **Responsable** : À assigner
 - **Description** :
   - Définir les structures `request_t` et `response_t`
   - Définir tous les opcodes (LIST, CREATE, COMBINE, REMOVE, etc.)
@@ -259,6 +272,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 26 novembre 2025, 18h00
 - **Branche Git** : `feature/named-pipes`
 - **Prérequis** : T2.1 (architecture protocole)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `init_pipes` (création des FIFO avec mkfifo)
   - Implémenter `open_pipes` pour le démon (lecture request, écriture reply)
@@ -277,6 +291,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 28 novembre 2025, 18h00
 - **Branche Git** : `feature/protocol-serialization`
 - **Prérequis** : T2.1 (architecture protocole), T1.6 (sérialisation)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `send_request` (sérialisation de toutes les requêtes)
   - Implémenter `receive_request` (désérialisation)
@@ -295,6 +310,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 30 novembre 2025, 18h00
 - **Branche Git** : `feature/client-parsing`
 - **Prérequis** : T2.4 (protocole sérialisation)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter le parsing avec `getopt`
   - Parser les options `-l`, `-x`, `-o`, `-e`, `-c`, `-s`, `-r`, `-q`
@@ -314,6 +330,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 2 décembre 2025, 18h00
 - **Branche Git** : `feature/client-queries`
 - **Prérequis** : T2.5 (parsing arguments), T2.4 (protocole)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `cmd_list` (liste des tâches)
   - Implémenter `cmd_times_exitcodes` (historique)
@@ -332,6 +349,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 30 novembre 2025, 18h00
 - **Branche Git** : `feature/daemon-list`
 - **Prérequis** : T2.4 (protocole), T1.7 (lecture arborescence)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter traitement de `OPCODE_LIST` dans `handle_request`
   - Charger toutes les tâches depuis le disque avec `list_all_tasks`
@@ -350,6 +368,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 3 décembre 2025, 18h00
 - **Branche Git** : `feature/daemon-times`
 - **Prérequis** : T2.4 (protocole), T1.12 (logs)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `read_execution_logs` (lecture times-exitcodes)
   - Traitement de `OPCODE_TIMES_EXITCODES` dans `handle_request`
@@ -368,6 +387,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 4 décembre 2025, 18h00
 - **Branche Git** : `feature/daemon-outputs`
 - **Prérequis** : T2.4 (protocole), T1.12 (logs)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `read_stdout` et `read_stderr`
   - Traitement de `OPCODE_STDOUT` et `OPCODE_STDERR`
@@ -386,6 +406,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 28 novembre 2025, 18h00
 - **Branche Git** : `feature/request-handling`
 - **Prérequis** : T2.2 (tubes nommés), T1.11 (boucle principale)
+- **Responsable** : À assigner
 - **Description** :
   - Modifier `daemon_loop` pour gérer les requêtes
   - Utiliser `select()` pour gérer requêtes et exécution de manière non-bloquante
@@ -403,6 +424,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 11 décembre 2025, 18h00
 - **Branche Git** : `integration/jalon-2`
 - **Prérequis** : T2.6 (client consultatif), T2.7, T2.8, T2.9 (toutes requêtes démon)
+- **Responsable** : À assigner
 - **Description** :
   - Tests de toutes les requêtes consultatives
   - Tests de communication client-serveur
@@ -423,6 +445,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 15 décembre 2025, 18h00
 - **Branche Git** : `feature/daemon-modify`
 - **Prérequis** : T2.3 (jalon 2 terminé), T1.8 (écriture arborescence)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter traitement `OPCODE_CREATE` (création tâche simple)
   - Implémenter traitement `OPCODE_REMOVE` (suppression tâche)
@@ -441,6 +464,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 17 décembre 2025, 18h00
 - **Branche Git** : `feature/client-modify`
 - **Prérequis** : T3.1 (requêtes modification), T2.5 (parsing)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `cmd_create` (création de tâche)
   - Implémenter `cmd_remove` (suppression)
@@ -459,6 +483,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 19 décembre 2025, 18h00
 - **Branche Git** : `feature/persistence`
 - **Prérequis** : T3.1 (requêtes modification), T1.7 (lecture)
+- **Responsable** : À assigner
 - **Description** :
   - Vérifier que le démon peut reprendre après redémarrage
   - Tests de persistance des données
@@ -476,6 +501,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 16 décembre 2025, 18h00
 - **Branche Git** : `feature/abstract-tasks`
 - **Prérequis** : T3.2 (client modification), T1.11 (planification)
+- **Responsable** : À assigner
 - **Description** :
   - Support de l'option `-n` (pas de timing)
   - Tâches sans horaire d'exécution (timing tous à 0)
@@ -493,6 +519,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 18 décembre 2025, 18h00
 - **Branche Git** : `feature/formatting`
 - **Prérequis** : T3.2 (client modification)
+- **Responsable** : À assigner
 - **Description** :
   - Implémenter `format_timing_display` (affichage timing lisible)
   - Implémenter `format_command_line` (affichage commandes)
@@ -510,6 +537,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 4 janvier 2026, 18h00
 - **Branche Git** : `feature/error-handling`
 - **Prérequis** : T3.2 (toutes fonctionnalités)
+- **Responsable** : À assigner
 - **Description** :
   - Gestion complète des erreurs système
   - Messages d'erreur explicites pour l'utilisateur
@@ -528,6 +556,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 22 décembre 2025, 18h00
 - **Branche Git** : `feature/comprehensive-tests`
 - **Prérequis** : T3.2 (toutes fonctionnalités)
+- **Responsable** : À assigner
 - **Description** :
   - Tests unitaires pour chaque module
   - Tests d'intégration complets
@@ -546,6 +575,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 6 janvier 2026, 18h00
 - **Branche Git** : `feature/optimization`
 - **Prérequis** : T3.8 (tests)
+- **Responsable** : À assigner
 - **Description** :
   - Optimisation de la gestion mémoire
   - Nettoyage du code (commentaires, style uniforme)
@@ -564,6 +594,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 7 janvier 2026, 18h00
 - **Branche Git** : `feature/git-cleanup`
 - **Prérequis** : T3.9 (optimisations)
+- **Responsable** : À assigner
 - **Description** :
   - Nettoyage de l'historique Git
   - Vérification que toutes les branches sont mergées
@@ -581,6 +612,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 5 janvier 2026, 18h00
 - **Branche Git** : `feature/documentation`
 - **Prérequis** : T3.2 (toutes fonctionnalités)
+- **Responsable** : À assigner
 - **Description** :
   - Rédiger `README.md` complet avec exemples
   - Rédiger `ARCHITECTURE.md` détaillé
@@ -599,6 +631,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 9 janvier 2026, 18h00
 - **Branche Git** : `integration/rendu-final`
 - **Prérequis** : Toutes les tâches précédentes
+- **Responsable** : À assigner
 - **Description** :
   - Intégration de tous les modules
   - Tests finaux complets
