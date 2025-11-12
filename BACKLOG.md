@@ -40,7 +40,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 13 novembre 2025, 18h00
 - **Branche Git** : `feature/task-tree-structure`
 - **Prérequis** : T1.1 (architecture globale)
-- **Responsable** : À assigner
+- **Responsable** : Ahmed
 - **Description** :
   - Créer la structure de données `task_t`
   - Implémenter `init_task_directory` (création récursive des répertoires)
@@ -58,7 +58,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 12 novembre 2025, 18h00
 - **Branche Git** : `feature/serialization-integers`
 - **Prérequis** : T1.1 (architecture globale)
-- **Responsable** : À assigner
+- **Responsable** : Ahmed
 - **Description** :
   - Implémenter `write_uint8/16/32/64` avec conversion big-endian (htobe16/32/64)
   - Implémenter `read_uint8/16/32/64` avec conversion big-endian (be16toh/32toh/64toh)
@@ -76,7 +76,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 14 novembre 2025, 18h00
 - **Branche Git** : `feature/serialization-complex`
 - **Prérequis** : T1.4 (sérialisation entiers)
-- **Responsable** : À assigner
+- **Responsable** : Pitel
 - **Description** :
   - Implémenter `write_string` et `read_string` (format : LENGTH uint32 + DATA)
   - Implémenter `write_timing` et `read_timing` (uint64 + uint32 + uint8)
@@ -94,7 +94,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 16 novembre 2025, 18h00
 - **Branche Git** : `feature/serialization-commands`
 - **Prérequis** : T1.5 (sérialisation types complexes)
-- **Responsable** : À assigner
+- **Responsable** : Pitel
 - **Description** :
   - Implémenter `write_command` et `read_command` (récursif)
   - Gestion des commandes simples (TYPE='SI' + arguments)
@@ -113,7 +113,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 15 novembre 2025, 18h00
 - **Branche Git** : `feature/task-tree-read`
 - **Prérequis** : T1.2 (structure), T1.6 (sérialisation commandes)
-- **Responsable** : À assigner
+- **Responsable** : Ahmed
 - **Description** :
   - Implémenter `load_task_from_dir` (chargement d'une tâche complète)
   - Implémenter `load_complex_command` (récursif pour commandes complexes)
@@ -132,7 +132,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 12 novembre 2025, 18h00
 - **Branche Git** : `feature/task-tree-write`
 - **Prérequis** : T1.2 (structure), T1.6 (sérialisation commandes)
-- **Responsable** : À assigner
+- **Responsable** : Ahmed
 - **Description** :
   - Implémenter `save_task_to_dir` (sauvegarde d'une tâche complète)
   - Implémenter `save_command_to_dir` (récursif pour commandes complexes)
@@ -151,7 +151,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 17 novembre 2025, 18h00
 - **Branche Git** : `feature/execute-simple`
 - **Prérequis** : T1.7 (lecture arborescence)
-- **Responsable** : À assigner
+- **Responsable** : Abderrahman AJINOU
 - **Description** :
   - Implémenter `execute_simple_command`
   - Utiliser `fork()` pour créer processus enfant
@@ -172,7 +172,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 18 novembre 2025, 18h00
 - **Branche Git** : `feature/execute-sequence`
 - **Prérequis** : T1.9 (exécution commandes simples)
-- **Responsable** : À assigner
+- **Responsable** : Pitel
 - **Description** :
   - Implémenter `execute_sequence_command`
   - Exécuter les sous-commandes séquentiellement
@@ -191,7 +191,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 20 novembre 2025, 18h00
 - **Branche Git** : `feature/daemon-loop`
 - **Prérequis** : T1.10 (exécution séquences), T1.12 (logs)
-- **Responsable** : À assigner
+- **Responsable** : Abderrahman AJINOU
 - **Description** :
   - Implémenter `should_execute_task` (vérification timing avec bits)
   - Utiliser `time()` et `localtime()` pour obtenir date/heure actuelle
@@ -212,7 +212,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Deadline** : 16 novembre 2025, 18h00
 - **Branche Git** : `feature/execution-logs`
 - **Prérequis** : T1.8 (écriture arborescence)
-- **Responsable** : À assigner
+- **Responsable** : Pitel
 - **Description** :
   - Implémenter `append_execution_log` (ajout dans times-exitcodes)
   - Implémenter `save_stdout` et `save_stderr` (écriture fichiers)
