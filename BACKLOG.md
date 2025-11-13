@@ -92,7 +92,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Durée estimée** : 4h
 - **Date de début** : 14 novembre 2025, 18h00
 - **Deadline** : 16 novembre 2025, 18h00
-- **Branche Git** : `feature/serialization-commands`
+- **Branche Git** : `feature/serialization-complex`
 - **Prérequis** : T1.5 (sérialisation types complexes)
 - **Responsable** : Pitel
 - **Description** :
