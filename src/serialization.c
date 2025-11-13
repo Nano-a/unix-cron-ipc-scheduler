@@ -1,6 +1,7 @@
 // TODO: À compléter par la personne responsable de la sérialisation
 // Référence : serialisation.md, ARCHITECTURE_T1.1.md
 
+#define _DEFAULT_SOURCE
 #include "serialization.h"
 #include <endian.h>
 #include <errno.h>
@@ -97,61 +98,5 @@ int read_int64(int fd, int64_t *value) {
     ssize_t rd = read(fd, &tmp, sizeof(int64_t));
     if (rd != sizeof(int64_t)) return -1;
     *value = (int64_t)be64toh((uint64_t)tmp);
-    return 0;
-}
-
-int main(void) {
-    const char *filename = "test.bin";
-    int fd;
-
-    // ---------------------------
-    // Écriture de quelques entiers
-    // ---------------------------
-    fd = open(filename, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    if (fd < 0) {
-        perror("open");
-        return 1;
-    }
-
-    if (write_uint8(fd, 0x12) < 0) perror("write_uint8");
-    if (write_uint16(fd, 0x1234) < 0) perror("write_uint16");
-    if (write_uint32(fd, 0x12345678) < 0) perror("write_uint32");
-    if (write_uint64(fd, 0x123456789ABCDEF0ULL) < 0) perror("write_uint64");
-    if (write_int64(fd, -1234567890123456789LL) < 0) perror("write_int64");
-
-    close(fd);
-
-    // ---------------------------
-    // Lecture des entiers
-    // ---------------------------
-    fd = open(filename, O_RDONLY);
-    if (fd < 0) {
-        perror("open");
-        return 1;
-    }
-
-    uint8_t u8;
-    uint16_t u16;
-    uint32_t u32;
-    uint64_t u64;
-    int64_t i64;
-
-    if (read_uint8(fd, &u8) < 0) perror("read_uint8");
-    if (read_uint16(fd, &u16) < 0) perror("read_uint16");
-    if (read_uint32(fd, &u32) < 0) perror("read_uint32");
-    if (read_uint64(fd, &u64) < 0) perror("read_uint64");
-    if (read_int64(fd, &i64) < 0) perror("read_int64");
-
-    close(fd);
-
-    // ---------------------------
-    // Affichage des valeurs
-    // ---------------------------
-    printf("u8  = 0x%02X\n", u8);
-    printf("u16 = 0x%04X\n", u16);
-    printf("u32 = 0x%08X\n", u32);
-    printf("u64 = 0x%016lX\n", u64);
-    printf("i64 = %ld\n", i64);
-
     return 0;
 }
