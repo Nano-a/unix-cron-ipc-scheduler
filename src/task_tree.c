@@ -76,23 +76,3 @@ int build_task_path(char *path, size_t path_size, const char *run_dir,
     }
     return 0;
 }
-
-
-int main(void) {
-    char path[512];
-
-    // Test 1 : initialisation du répertoire
-    init_task_directory("/mnt/c/Users/ahmed/OneDrive/Bureau/System");
-
-    // Test 2 : construction d’un chemin de tâche
-    if (build_task_dir_path(path, sizeof(path), "/mnt/c/Users/ahmed/OneDrive/Bureau/System", 5) == 0) {
-        printf("Dossier tâche : %s\n", path);
-    }
-
-    // Test 3 : construction d’un chemin de fichier
-    if (build_task_path(path, sizeof(path), "/mnt/c/Users/ahmed/OneDrive/Bureau/System", 5, "timing") == 0) {
-        printf("Fichier tâche : %s\n", path);
-    }
-
-    return 0;
-}
