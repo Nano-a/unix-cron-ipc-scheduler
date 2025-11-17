@@ -22,4 +22,8 @@ int build_task_path(char *path, size_t path_size, const char *run_dir, uint64_t 
 
 int load_task_from_dir(const char *run_dir, uint64_t taskid, task_t **task);
 static int load_complex_command(const char *cmd_dir, command_t **cmd);
+
+int save_task_to_dir(const char *run_dir, const task_t *task);
+static int save_command_to_dir(const char *cmd_dir, const command_t *cmd);
+
 #endif // TASK_TREE_H

@@ -174,3 +174,85 @@ static int load_complex_command(const char *cmd_dir, command_t **cmd) {
     
     return 0;
 }
+
+int save_task_to_dir(const char *run_dir, const task_t *task) {
+    char path[MAX_PATH_LEN];
+    char dir_path[MAX_PATH_LEN];
+    int fd;
+    
+    // Construire le chemin du répertoire de la tâche
+    if (build_task_dir_path(dir_path, sizeof(dir_path), run_dir, task->taskid) < 0) {
+        return -1;
+    }
+    
+    // Créer le répertoire récursivement
+    // Utiliser mkdir -p équivalent
+    // ...
+    
+    // Sauvegarder le timing
+    if (build_task_path(path, sizeof(path), run_dir, task->taskid, "timing") < 0) {
+        return -1;
+    }
+    
+    fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) return -1;
+    
+    if (write_timing(fd, &task->timing) < 0) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    
+    // Sauvegarder la commande
+    if (build_task_path(path, sizeof(path), run_dir, task->taskid, "cmd") < 0) {
+        return -1;
+    }
+    
+    if (save_command_to_dir(path, task->cmd) < 0) {
+        return -1;
+    }
+    
+    return 0;
+}
+```
+
+#### save_command_to_dir (récursif)
+
+```c
+static int save_command_to_dir(const char *cmd_dir, const command_t *cmd) {
+    char path[MAX_PATH_LEN];
+    int fd;
+    
+    // Créer le répertoire cmd si nécessaire
+    // ...
+    
+    // Écrire le type
+    snprintf(path, sizeof(path), "%s/type", cmd_dir);
+    fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) return -1;
+    
+    if (write_uint16(fd, cmd->type) < 0) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    
+    if (cmd->type == CMD_TYPE_SIMPLE) {
+        // Commande simple : écrire argv
+        snprintf(path, sizeof(path), "%s/argv", cmd_dir);
+        fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (fd < 0) return -1;
+        
+        if (write_arguments(fd, &cmd->u.args) < 0) {
+            close(fd);
+            return -1;
+        }
+        close(fd);
+    } else {
+        // Commande complexe : sauvegarder récursivement
+        // TODO: Implémenter la sauvegarde récursive
+    }
+    
+    return 0;
+}
+```
