@@ -10,7 +10,11 @@
 #include <stdio.h>      // printf, perror
 #include <fcntl.h>      // open, O_CREAT, O_WRONLY, O_TRUNC, O_RDONLY
 #include <string.h>
-#include <stdlib.h> 
+#include <stdlib.h>
+#include <limits.h>
+
+#define CMD_SERIAL_KIND_SIMPLE   0
+#define CMD_SERIAL_KIND_SEQUENCE 1
 
 
 
@@ -188,12 +192,13 @@ int read_string(int fd, char **out) {
     uint32_t L;
     if (read_uint32(fd, &L) < 0) return -1;
 
-    //if (L > SIZE_MAX - 1) { 
+    size_t alloc_size = (size_t)L + 1;
+    if (alloc_size <= (size_t)L) {
         errno = EOVERFLOW;
         return -1;
-    //}
+    }
 
-    char *buf = malloc((size_t)L + 1);
+    char *buf = malloc(alloc_size);
     if (!buf) return -1;
 
     if (L > 0) {
@@ -419,8 +424,156 @@ void free_command(command_t *cmd) {
     free(cmd);
 }
 
+static int validate_command_layout(const command_t *cmd) {
+    if (!cmd) {
+        errno = EINVAL;
+        return 0;
+    }
 
+    int is_simple = (cmd->argc > 0);
+    int is_sequence = (cmd->nb_cmds > 0);
 
+    if (is_simple && is_sequence) {
+        errno = EINVAL;
+        return 0;
+    }
 
+    if (!is_simple && !is_sequence) {
+        errno = EINVAL;
+        return 0;
+    }
 
+    if (is_simple) {
+        if (!cmd->argv) {
+            errno = EINVAL;
+            return 0;
+        }
+    } else {
+        if (!cmd->cmds) {
+            errno = EINVAL;
+            return 0;
+        }
+    }
+    return 1;
+}
 
+int write_command(int fd, const command_t *cmd) {
+    if (!validate_command_layout(cmd)) {
+        return -1;
+    }
+
+    if (write_uint16(fd, cmd->type) < 0) {
+        return -1;
+    }
+
+    uint8_t kind = (cmd->nb_cmds > 0) ? CMD_SERIAL_KIND_SEQUENCE : CMD_SERIAL_KIND_SIMPLE;
+    if (write_uint8(fd, kind) < 0) {
+        return -1;
+    }
+
+    if (kind == CMD_SERIAL_KIND_SIMPLE) {
+        if (write_arguments(fd, cmd->argc, cmd->argv) < 0) {
+            return -1;
+        }
+        return 0;
+    }
+
+    if (write_uint32(fd, cmd->nb_cmds) < 0) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < cmd->nb_cmds; ++i) {
+        if (!cmd->cmds[i]) {
+            errno = EINVAL;
+            return -1;
+        }
+        if (write_command(fd, cmd->cmds[i]) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static void clean_partial_children(command_t **children, uint32_t count) {
+    if (!children) return;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (children[i]) {
+            free_command(children[i]);
+        }
+    }
+    free(children);
+}
+
+int read_command(int fd, command_t **cmd_out) {
+    if (!cmd_out) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    command_t *cmd = calloc(1, sizeof(command_t));
+    if (!cmd) return -1;
+
+    if (read_uint16(fd, &cmd->type) < 0) {
+        free(cmd);
+        return -1;
+    }
+
+    uint8_t kind;
+    if (read_uint8(fd, &kind) < 0) {
+        free(cmd);
+        return -1;
+    }
+
+    if (kind == CMD_SERIAL_KIND_SIMPLE) {
+        uint32_t argc = 0;
+        char **argv = NULL;
+        if (read_arguments(fd, &argc, &argv) < 0) {
+            free(cmd);
+            return -1;
+        }
+        cmd->argc = argc;
+        cmd->argv = argv;
+        cmd->nb_cmds = 0;
+        cmd->cmds = NULL;
+        *cmd_out = cmd;
+        return 0;
+    }
+
+    if (kind != CMD_SERIAL_KIND_SEQUENCE) {
+        free(cmd);
+        errno = EBADMSG;
+        return -1;
+    }
+
+    uint32_t nb_cmds = 0;
+    if (read_uint32(fd, &nb_cmds) < 0) {
+        free(cmd);
+        return -1;
+    }
+    if (nb_cmds == 0) {
+        free(cmd);
+        errno = EPROTO;
+        return -1;
+    }
+
+    command_t **children = calloc(nb_cmds, sizeof(command_t *));
+    if (!children) {
+        free(cmd);
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < nb_cmds; ++i) {
+        if (read_command(fd, &children[i]) < 0) {
+            clean_partial_children(children, i);
+            free(cmd);
+            return -1;
+        }
+    }
+
+    cmd->argc = 0;
+    cmd->argv = NULL;
+    cmd->nb_cmds = nb_cmds;
+    cmd->cmds = children;
+    *cmd_out = cmd;
+    return 0;
+}
