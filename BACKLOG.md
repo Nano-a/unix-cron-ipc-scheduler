@@ -111,7 +111,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Durée estimée** : 4h
 - **Date de début** : 13 novembre 2025, 18h00
 - **Deadline** : 15 novembre 2025, 18h00
-- **Branche Git** : `feature/task-tree-read`
+- **Branche Git** : `feature/task-tree`
 - **Prérequis** : T1.2 (structure), T1.6 (sérialisation commandes)
 - **Responsable** : Ahmed
 - **Description** :
@@ -130,7 +130,7 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Durée estimée** : 4h
 - **Date de début** : 10 novembre 2025, 18h00
 - **Deadline** : 12 novembre 2025, 18h00
-- **Branche Git** : `feature/task-tree-write`
+- **Branche Git** : `feature/task-tree`
 - **Prérequis** : T1.2 (structure), T1.6 (sérialisation commandes)
 - **Responsable** : Ahmed
 - **Description** :
