@@ -34,6 +34,7 @@ typedef enum {SI,   // Commande simple
 typedef struct command {
     uint16_t type;            // 'SI' ou 'SQ' (valeur big-endian en sérialisation)
     arguments_t args;         // utilisé seulement si type == CMD_SI
+    
     uint32_t nb_cmds;         // utilisé seulement si type != CMD_SI
     struct command *cmds;     // tableau de sous-commandes (taille nb_cmds)
 } command_t;

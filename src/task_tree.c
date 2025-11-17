@@ -1,9 +1,14 @@
 #define _POSIX_C_SOURCE 200809L
 #include "task_tree.h"
+#include "task_tree.h"
+#include "serialization.h"  // pour read_timing, read_arguments
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <stdlib.h>   // malloc, free
+#include <fcntl.h>    // open, O_RDONLY
+#include <unistd.h>   // close, read, write
 
 // Vérifie si un dossier existe
 int dir_exists(const char *path) {
@@ -74,5 +79,98 @@ int build_task_path(char *path, size_t path_size, const char *run_dir,
     if (result < 0 || result >= (int)path_size) {
         return -1;
     }
+    return 0;
+}
+
+int load_task_from_dir(const char *run_dir, uint64_t taskid, task_t **task) {
+    char path[MAX_PATH_LEN];
+    int fd;
+    
+    *task = malloc(sizeof(task_t));
+    if (!*task) return -1;
+    
+    (*task)->taskid = taskid;
+    
+    // Charger le timing
+    if (build_task_path(path, sizeof(path), run_dir, taskid, "timing") < 0) {
+        free(*task);
+        *task = NULL;
+        return -1;
+    }
+    
+    fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        free(*task);
+        *task = NULL;
+        return -1;
+    }
+    
+    if (read_timing(fd, &(*task)->timing) < 0) {
+        close(fd);
+        free(*task);
+        *task = NULL;
+        return -1;
+    }
+    close(fd);
+    
+    // Charger la commande
+    if (build_task_path(path, sizeof(path), run_dir, taskid, "cmd") < 0) {
+        free(*task);
+        *task = NULL;
+        return -1;
+    }
+    
+    if (load_complex_command(path, &(*task)->cmd) < 0) {
+        free(*task);
+        *task = NULL;
+        return -1;
+    }
+    
+    return 0;
+}
+
+static int load_complex_command(const char *cmd_dir, command_t **cmd) {
+    char path[MAX_PATH_LEN];
+    int fd;
+    uint16_t type;
+    
+    // Lire le type
+    snprintf(path, sizeof(path), "%s/type", cmd_dir);
+    fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    
+    if (read_uint16(fd, &type) < 0) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    
+    *cmd = malloc(sizeof(command_t));
+    if (!*cmd) return -1;
+    
+    (*cmd)->type = type;
+    
+    if (type == CMD_TYPE_SIMPLE) {
+        // Commande simple : lire argv
+        snprintf(path, sizeof(path), "%s/argv", cmd_dir);
+        fd = open(path, O_RDONLY);
+        if (fd < 0) {
+            free(*cmd);
+            *cmd = NULL;
+            return -1;
+        }
+        
+        if (read_arguments(fd, &(*cmd)->u.args) < 0) {
+            close(fd);
+            free(*cmd);
+            *cmd = NULL;
+            return -1;
+        }
+        close(fd);
+    } else {
+        // Commande complexe : lire les sous-commandes
+        // TODO: Implémenter la lecture récursive
+    }
+    
     return 0;
 }
