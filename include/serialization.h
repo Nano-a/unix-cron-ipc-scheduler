@@ -24,7 +24,7 @@ typedef struct command {
     uint32_t nb_cmds;      
     struct command **cmds; 
 } command_t;
-
+ 
 // Fonctions pour écrire des entiers non signés (big-endian)
 int write_uint8(int fd, uint8_t value);
 int write_uint16(int fd, uint16_t value);
