@@ -1,7 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
 #include "task_tree.h"
-#include "task_tree.h"
-#include "serialization.h"  // pour read_timing, read_arguments
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -9,6 +7,9 @@
 #include <stdlib.h>   // malloc, free
 #include <fcntl.h>    // open, O_RDONLY
 #include <unistd.h>   // close, read, write
+
+#define TASK_TIMING_FILENAME  "timing"
+#define TASK_COMMAND_FILENAME "cmd.bin"
 
 // Vérifie si un dossier existe
 int dir_exists(const char *path) {
@@ -82,177 +83,165 @@ int build_task_path(char *path, size_t path_size, const char *run_dir,
     return 0;
 }
 
-int load_task_from_dir(const char *run_dir, uint64_t taskid, task_t **task) {
-    char path[MAX_PATH_LEN];
-    int fd;
-    
-    *task = malloc(sizeof(task_t));
-    if (!*task) return -1;
-    
-    (*task)->taskid = taskid;
-    
-    // Charger le timing
-    if (build_task_path(path, sizeof(path), run_dir, taskid, "timing") < 0) {
-        free(*task);
-        *task = NULL;
+static int ensure_directory_exists(const char *path) {
+    char mutable_path[MAX_PATH_LEN];
+
+    size_t len = strnlen(path, sizeof(mutable_path));
+    if (len == sizeof(mutable_path)) {
+        errno = ENAMETOOLONG;
         return -1;
     }
-    
-    fd = open(path, O_RDONLY);
+
+    memcpy(mutable_path, path, len + 1);
+    return create_dir_recursive(mutable_path, 0755);
+}
+
+static int load_command_file(const char *path, command_t **cmd_out) {
+    if (!cmd_out) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    int fd = open(path, O_RDONLY);
     if (fd < 0) {
-        free(*task);
-        *task = NULL;
         return -1;
     }
-    
-    if (read_timing(fd, &(*task)->timing) < 0) {
+
+    command_t *cmd = NULL;
+    if (read_command(fd, &cmd) < 0) {
+        int saved = errno;
         close(fd);
-        free(*task);
-        *task = NULL;
+        errno = saved;
         return -1;
     }
     close(fd);
-    
-    // Charger la commande
-    if (build_task_path(path, sizeof(path), run_dir, taskid, "cmd") < 0) {
-        free(*task);
-        *task = NULL;
-        return -1;
-    }
-    
-    if (load_complex_command(path, &(*task)->cmd) < 0) {
-        free(*task);
-        *task = NULL;
-        return -1;
-    }
-    
+
+    *cmd_out = cmd;
     return 0;
 }
 
-static int load_complex_command(const char *cmd_dir, command_t **cmd) {
-    char path[MAX_PATH_LEN];
-    int fd;
-    uint16_t type;
-    
-    // Lire le type
-    snprintf(path, sizeof(path), "%s/type", cmd_dir);
-    fd = open(path, O_RDONLY);
-    if (fd < 0) return -1;
-    
-    if (read_uint16(fd, &type) < 0) {
-        close(fd);
+static int save_command_file(const char *path, const command_t *cmd) {
+    if (!cmd) {
+        errno = EINVAL;
         return -1;
     }
-    close(fd);
-    
-    *cmd = malloc(sizeof(command_t));
-    if (!*cmd) return -1;
-    
-    (*cmd)->type = type;
-    
-    if (type == CMD_TYPE_SIMPLE) {
-        // Commande simple : lire argv
-        snprintf(path, sizeof(path), "%s/argv", cmd_dir);
-        fd = open(path, O_RDONLY);
-        if (fd < 0) {
-            free(*cmd);
-            *cmd = NULL;
-            return -1;
-        }
-        
-        if (read_arguments(fd, &(*cmd)->u.args) < 0) {
-            close(fd);
-            free(*cmd);
-            *cmd = NULL;
-            return -1;
-        }
-        close(fd);
-    } else {
-        // Commande complexe : lire les sous-commandes
-        // TODO: Implémenter la lecture récursive
+
+    int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        return -1;
     }
-    
+
+    if (write_command(fd, cmd) < 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+
+    if (close(fd) < 0) {
+        return -1;
+    }
     return 0;
+}
+
+int load_task_from_dir(const char *run_dir, uint64_t taskid, task_t **task_out) {
+    if (!run_dir || !task_out) {
+        errno = EINVAL;
+        return -1;
+    }
+    *task_out = NULL;
+
+    char path[MAX_PATH_LEN];
+    task_t *task = calloc(1, sizeof(task_t));
+    if (!task) {
+        return -1;
+    }
+    task->taskid = taskid;
+
+    int fd = -1;
+
+    if (build_task_path(path, sizeof(path), run_dir, taskid, TASK_TIMING_FILENAME) < 0) {
+        goto error;
+    }
+
+    fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        goto error;
+    }
+    if (read_timing(fd, &task->timing) < 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        goto error;
+    }
+    close(fd);
+    fd = -1;
+
+    if (build_task_path(path, sizeof(path), run_dir, taskid, TASK_COMMAND_FILENAME) < 0) {
+        goto error;
+    }
+
+    if (load_command_file(path, &task->cmd) < 0) {
+        goto error;
+    }
+
+    *task_out = task;
+    return 0;
+
+error:
+    if (fd >= 0) {
+        close(fd);
+    }
+    free_task(task);
+    return -1;
 }
 
 int save_task_to_dir(const char *run_dir, const task_t *task) {
-    char path[MAX_PATH_LEN];
+    if (!run_dir || !task || !task->cmd) {
+        errno = EINVAL;
+        return -1;
+    }
+
     char dir_path[MAX_PATH_LEN];
-    int fd;
-    
-    // Construire le chemin du répertoire de la tâche
+    char file_path[MAX_PATH_LEN];
+
     if (build_task_dir_path(dir_path, sizeof(dir_path), run_dir, task->taskid) < 0) {
         return -1;
     }
-    
-    // Créer le répertoire récursivement
-    // Utiliser mkdir -p équivalent
-    // ...
-    
-    // Sauvegarder le timing
-    if (build_task_path(path, sizeof(path), run_dir, task->taskid, "timing") < 0) {
+    if (ensure_directory_exists(dir_path) < 0) {
         return -1;
     }
-    
-    fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    if (fd < 0) return -1;
-    
+
+    if (build_task_path(file_path, sizeof(file_path), run_dir, task->taskid, TASK_TIMING_FILENAME) < 0) {
+        return -1;
+    }
+    int fd = open(file_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        return -1;
+    }
     if (write_timing(fd, &task->timing) < 0) {
+        int saved = errno;
         close(fd);
+        errno = saved;
         return -1;
     }
-    close(fd);
-    
-    // Sauvegarder la commande
-    if (build_task_path(path, sizeof(path), run_dir, task->taskid, "cmd") < 0) {
+    if (close(fd) < 0) {
         return -1;
     }
-    
-    if (save_command_to_dir(path, task->cmd) < 0) {
-        return -1;
-    }
-    
-    return 0;
-}
-```
 
-#### save_command_to_dir (récursif)
-
-```c
-static int save_command_to_dir(const char *cmd_dir, const command_t *cmd) {
-    char path[MAX_PATH_LEN];
-    int fd;
-    
-    // Créer le répertoire cmd si nécessaire
-    // ...
-    
-    // Écrire le type
-    snprintf(path, sizeof(path), "%s/type", cmd_dir);
-    fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    if (fd < 0) return -1;
-    
-    if (write_uint16(fd, cmd->type) < 0) {
-        close(fd);
+    if (build_task_path(file_path, sizeof(file_path), run_dir, task->taskid, TASK_COMMAND_FILENAME) < 0) {
         return -1;
     }
-    close(fd);
-    
-    if (cmd->type == CMD_TYPE_SIMPLE) {
-        // Commande simple : écrire argv
-        snprintf(path, sizeof(path), "%s/argv", cmd_dir);
-        fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-        if (fd < 0) return -1;
-        
-        if (write_arguments(fd, &cmd->u.args) < 0) {
-            close(fd);
-            return -1;
-        }
-        close(fd);
-    } else {
-        // Commande complexe : sauvegarder récursivement
-        // TODO: Implémenter la sauvegarde récursive
-    }
-    
-    return 0;
+
+    return save_command_file(file_path, task->cmd);
 }
-```
+
+void free_task(task_t *task) {
+    if (!task) {
+        return;
+    }
+    if (task->cmd) {
+        free_command(task->cmd);
+    }
+    free(task);
+}
