@@ -23,5 +23,10 @@ int execute_simple_command(const command_t *cmd,
                            char **stderr_buf, size_t *stderr_len,
                            uint16_t *exitcode);
 
+int execute_sequence_command(const command_t *cmd,
+                             char **stdout_buf, size_t *stdout_len,
+                             char **stderr_buf, size_t *stderr_len,
+                             uint16_t *exitcode);
+
 #endif // EXECUTION_H
 
