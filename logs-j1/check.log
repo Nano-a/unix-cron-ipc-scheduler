@@ -13,3 +13,5 @@ Hello J1
 ✅ stderr existe
 Taille:
 -rw-r--r-- 1 ajinou ajinou 0 Nov 22 14:37 /tmp/erraid_j1_612746/erraid/tasks/0/stderr
+=== Vérification des logs ===
+❌ times-exitcodes manquant

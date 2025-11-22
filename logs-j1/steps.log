@@ -11,5 +11,3 @@ gcc  -o tadmor src/tadmor.o src/serialization.o src/task_tree.o src/protocol.o s
 Tâche créée avec succès
 === Démarrage du démon ===
 === Attente exécution (10 secondes) ===
-=== Arrêt du démon ===
-✅ Intégration jalon 1 OK
