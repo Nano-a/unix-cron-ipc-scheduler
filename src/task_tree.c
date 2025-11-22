@@ -245,3 +245,54 @@ void free_task(task_t *task) {
     }
     free(task);
 }
+
+int append_execution_log(const char *run_dir, uint64_t taskid, int64_t timestamp, uint16_t exitcode) {
+    char path[MAX_PATH_LEN];
+    if (build_task_path(path, sizeof(path), run_dir, taskid, "times-exitcodes") < 0) {
+        return -1;
+    }
+
+    int fd = open(path, O_CREAT | O_WRONLY | O_APPEND, 0644);
+    if (fd < 0) {
+        return -1;
+    }
+
+    if (write_int64(fd, timestamp) < 0 || write_uint16(fd, exitcode) < 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    return close(fd);
+}
+
+static int save_stream_file(const char *run_dir, uint64_t taskid,
+                            const char *filename, const char *output, size_t len) {
+    char path[MAX_PATH_LEN];
+    if (build_task_path(path, sizeof(path), run_dir, taskid, filename) < 0) {
+        return -1;
+    }
+
+    int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        return -1;
+    }
+    if (len > 0) {
+        ssize_t written = write(fd, output, len);
+        if (written != (ssize_t)len) {
+            int saved = errno;
+            close(fd);
+            errno = saved;
+            return -1;
+        }
+    }
+    return close(fd);
+}
+
+int save_stdout(const char *run_dir, uint64_t taskid, const char *output, size_t len) {
+    return save_stream_file(run_dir, taskid, "stdout", output ? output : "", output ? len : 0);
+}
+
+int save_stderr(const char *run_dir, uint64_t taskid, const char *output, size_t len) {
+    return save_stream_file(run_dir, taskid, "stderr", output ? output : "", output ? len : 0);
+}

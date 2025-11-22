@@ -22,4 +22,8 @@ int load_task_from_dir(const char *run_dir, uint64_t taskid, task_t **task);
 int save_task_to_dir(const char *run_dir, const task_t *task);
 void free_task(task_t *task);
 
+int append_execution_log(const char *run_dir, uint64_t taskid, int64_t timestamp, uint16_t exitcode);
+int save_stdout(const char *run_dir, uint64_t taskid, const char *output, size_t len);
+int save_stderr(const char *run_dir, uint64_t taskid, const char *output, size_t len);
+
 #endif // TASK_TREE_H
