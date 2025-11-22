@@ -7,9 +7,11 @@
 #include <stdlib.h>   // malloc, free
 #include <fcntl.h>    // open, O_RDONLY
 #include <unistd.h>   // close, read, write
+#include <ctype.h>   // isdigit
+#include <dirent.h>   // opendir, readdir, closedir
 
 #define TASK_TIMING_FILENAME  "timing"
-#define TASK_COMMAND_FILENAME "cmd.bin"
+#define TASK_CMD_DIRNAME      "cmd"
 
 // Vérifie si un dossier existe
 int dir_exists(const char *path) {
@@ -61,7 +63,7 @@ int init_task_directory(const char *orig_path) {
 //  → "/tmp/user/erraid/tasks/5"
 // -------------------------------------------------------------------
 int build_task_dir_path(char *path, size_t path_size, const char *run_dir, uint64_t taskid) {
-    int result = snprintf(path, path_size, "%s/erraid/tasks/%lu", run_dir, taskid);
+    int result = snprintf(path, path_size, "%s/tasks/%lu", run_dir, taskid);
     if (result < 0 || result >= (int)path_size) {
         return -1;  // Erreur : chemin trop long
     }
@@ -75,7 +77,7 @@ int build_task_dir_path(char *path, size_t path_size, const char *run_dir, uint6
 // -------------------------------------------------------------------
 int build_task_path(char *path, size_t path_size, const char *run_dir,
                     uint64_t taskid, const char *filename) {
-    int result = snprintf(path, path_size, "%s/erraid/tasks/%lu/%s",
+    int result = snprintf(path, path_size, "%s/tasks/%lu/%s",
                           run_dir, taskid, filename);
     if (result < 0 || result >= (int)path_size) {
         return -1;
@@ -96,19 +98,29 @@ static int ensure_directory_exists(const char *path) {
     return create_dir_recursive(mutable_path, 0755);
 }
 
-static int load_command_file(const char *path, command_t **cmd_out) {
-    if (!cmd_out) {
+static int load_command_from_dir(const char *cmd_dir, command_t **cmd_out) {
+    if (!cmd_dir || !cmd_out) {
         errno = EINVAL;
         return -1;
     }
+    *cmd_out = NULL;
 
-    int fd = open(path, O_RDONLY);
+    char path[MAX_PATH_LEN];
+    int fd;
+    int len;
+
+    // Lire le type
+    len = snprintf(path, sizeof(path), "%s/type", cmd_dir);
+    if (len < 0 || len >= (int)sizeof(path)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    fd = open(path, O_RDONLY);
     if (fd < 0) {
         return -1;
     }
-
-    command_t *cmd = NULL;
-    if (read_command(fd, &cmd) < 0) {
+    uint16_t type;
+    if (read_uint16(fd, &type) < 0) {
         int saved = errno;
         close(fd);
         errno = saved;
@@ -116,31 +128,196 @@ static int load_command_file(const char *path, command_t **cmd_out) {
     }
     close(fd);
 
+    command_t *cmd = calloc(1, sizeof(command_t));
+    if (!cmd) {
+        return -1;
+    }
+    cmd->type = type;
+
+    // Commande simple : lire argv
+    if (type == type_from_str("SI")) {
+        len = snprintf(path, sizeof(path), "%s/argv", cmd_dir);
+        if (len < 0 || len >= (int)sizeof(path)) {
+            free(cmd);
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        fd = open(path, O_RDONLY);
+        if (fd < 0) {
+            free(cmd);
+            return -1;
+        }
+        if (read_arguments(fd, &cmd->argc, &cmd->argv) < 0) {
+            int saved = errno;
+            close(fd);
+            free(cmd);
+            errno = saved;
+            return -1;
+        }
+        close(fd);
+        cmd->nb_cmds = 0;
+        cmd->cmds = NULL;
+    } else {
+        // Commande complexe : lire les sous-commandes
+        cmd->argc = 0;
+        cmd->argv = NULL;
+        
+        // Compter les sous-répertoires
+        DIR *dir = opendir(cmd_dir);
+        if (!dir) {
+            free(cmd);
+            return -1;
+        }
+        
+        size_t capacity = 8;
+        size_t count = 0;
+        command_t **cmds = calloc(capacity, sizeof(command_t *));
+        if (!cmds) {
+            closedir(dir);
+            free(cmd);
+            return -1;
+        }
+
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
+            }
+            if (strcmp(entry->d_name, "type") == 0) {
+                continue;
+            }
+            // Vérifier que c'est un nombre
+            int is_num = 1;
+            for (const char *p = entry->d_name; *p; ++p) {
+                if (!isdigit((unsigned char)*p)) {
+                    is_num = 0;
+                    break;
+                }
+            }
+            if (!is_num) {
+                continue;
+            }
+
+            uint32_t idx = (uint32_t)strtoul(entry->d_name, NULL, 10);
+            if (idx >= capacity) {
+                size_t new_cap = capacity;
+                while (new_cap <= idx) {
+                    new_cap *= 2;
+                }
+                command_t **tmp = realloc(cmds, new_cap * sizeof(command_t *));
+                if (!tmp) {
+                    for (size_t i = 0; i < count; ++i) {
+                        free_command(cmds[i]);
+                    }
+                    free(cmds);
+                    closedir(dir);
+                    free(cmd);
+                    return -1;
+                }
+                memset(tmp + capacity, 0, (new_cap - capacity) * sizeof(command_t *));
+                cmds = tmp;
+                capacity = new_cap;
+            }
+
+            len = snprintf(path, sizeof(path), "%s/%s", cmd_dir, entry->d_name);
+            if (len < 0 || len >= (int)sizeof(path)) {
+                for (size_t i = 0; i < count; ++i) {
+                    free_command(cmds[i]);
+                }
+                free(cmds);
+                closedir(dir);
+                free(cmd);
+                errno = ENAMETOOLONG;
+                return -1;
+            }
+
+            if (load_command_from_dir(path, &cmds[idx]) < 0) {
+                for (size_t i = 0; i < count; ++i) {
+                    free_command(cmds[i]);
+                }
+                free(cmds);
+                closedir(dir);
+                free(cmd);
+                return -1;
+            }
+            if (idx >= count) {
+                count = idx + 1;
+            }
+        }
+        closedir(dir);
+
+        cmd->nb_cmds = (uint32_t)count;
+        cmd->cmds = cmds;
+    }
+
     *cmd_out = cmd;
     return 0;
 }
 
-static int save_command_file(const char *path, const command_t *cmd) {
-    if (!cmd) {
+static int save_command_to_dir(const char *cmd_dir, const command_t *cmd) {
+    if (!cmd_dir || !cmd) {
         errno = EINVAL;
         return -1;
     }
 
-    int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    if (fd < 0) {
+    if (ensure_directory_exists(cmd_dir) < 0) {
         return -1;
     }
 
-    if (write_command(fd, cmd) < 0) {
+    char path[MAX_PATH_LEN];
+    int fd;
+    int len;
+
+    // Écrire le type
+    len = snprintf(path, sizeof(path), "%s/type", cmd_dir);
+    if (len < 0 || len >= (int)sizeof(path)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        return -1;
+    }
+    if (write_uint16(fd, cmd->type) < 0) {
         int saved = errno;
         close(fd);
         errno = saved;
         return -1;
     }
+    close(fd);
 
-    if (close(fd) < 0) {
-        return -1;
+    // Commande simple : écrire argv
+    if (cmd->type == type_from_str("SI")) {
+        len = snprintf(path, sizeof(path), "%s/argv", cmd_dir);
+        if (len < 0 || len >= (int)sizeof(path)) {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (fd < 0) {
+            return -1;
+        }
+        if (write_arguments(fd, cmd->argc, cmd->argv) < 0) {
+            int saved = errno;
+            close(fd);
+            errno = saved;
+            return -1;
+        }
+        close(fd);
+    } else {
+        // Commande complexe : écrire les sous-commandes
+        for (uint32_t i = 0; i < cmd->nb_cmds; ++i) {
+            len = snprintf(path, sizeof(path), "%s/%u", cmd_dir, i);
+            if (len < 0 || len >= (int)sizeof(path)) {
+                errno = ENAMETOOLONG;
+                return -1;
+            }
+            if (save_command_to_dir(path, cmd->cmds[i]) < 0) {
+                return -1;
+            }
+        }
     }
+
     return 0;
 }
 
@@ -177,11 +354,17 @@ int load_task_from_dir(const char *run_dir, uint64_t taskid, task_t **task_out) 
     close(fd);
     fd = -1;
 
-    if (build_task_path(path, sizeof(path), run_dir, taskid, TASK_COMMAND_FILENAME) < 0) {
+    char cmd_dir_path[MAX_PATH_LEN];
+    if (build_task_dir_path(cmd_dir_path, sizeof(cmd_dir_path), run_dir, taskid) < 0) {
+        goto error;
+    }
+    int len = snprintf(path, sizeof(path), "%s/%s", cmd_dir_path, TASK_CMD_DIRNAME);
+    if (len < 0 || len >= (int)sizeof(path)) {
+        errno = ENAMETOOLONG;
         goto error;
     }
 
-    if (load_command_file(path, &task->cmd) < 0) {
+    if (load_command_from_dir(path, &task->cmd) < 0) {
         goto error;
     }
 
@@ -229,11 +412,16 @@ int save_task_to_dir(const char *run_dir, const task_t *task) {
         return -1;
     }
 
-    if (build_task_path(file_path, sizeof(file_path), run_dir, task->taskid, TASK_COMMAND_FILENAME) < 0) {
+    if (build_task_dir_path(dir_path, sizeof(dir_path), run_dir, task->taskid) < 0) {
+        return -1;
+    }
+    int len = snprintf(file_path, sizeof(file_path), "%s/%s", dir_path, TASK_CMD_DIRNAME);
+    if (len < 0 || len >= (int)sizeof(file_path)) {
+        errno = ENAMETOOLONG;
         return -1;
     }
 
-    return save_command_file(file_path, task->cmd);
+    return save_command_to_dir(file_path, task->cmd);
 }
 
 void free_task(task_t *task) {
