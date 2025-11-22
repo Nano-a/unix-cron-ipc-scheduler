@@ -1,0 +1,15 @@
+=== Compilation ===
+gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/erraid.c -o src/erraid.o
+gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/serialization.c -o src/serialization.o
+gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/task_tree.c -o src/task_tree.o
+gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/protocol.c -o src/protocol.o
+gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/execution.c -o src/execution.o
+gcc  -o erraid src/erraid.o src/serialization.o src/task_tree.o src/protocol.o src/execution.o
+gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/tadmor.c -o src/tadmor.o
+gcc  -o tadmor src/tadmor.o src/serialization.o src/task_tree.o src/protocol.o src/execution.o
+=== Création d'une tâche de test avec programme C ===
+Tâche créée avec succès
+=== Démarrage du démon ===
+=== Attente exécution (10 secondes) ===
+=== Arrêt du démon ===
+✅ Intégration jalon 1 OK

@@ -42,7 +42,7 @@ static void free_task_array(task_t **tasks, size_t count) {
 
 static int load_all_tasks(const char *run_dir, task_t ***tasks_out, size_t *count_out) {
     char tasks_dir[MAX_PATH_LEN];
-    int len = snprintf(tasks_dir, sizeof(tasks_dir), "%s/erraid/tasks", run_dir);
+    int len = snprintf(tasks_dir, sizeof(tasks_dir), "%s/tasks", run_dir);
     if (len < 0 || len >= (int)sizeof(tasks_dir)) {
         errno = ENAMETOOLONG;
         return -1;
