@@ -3,10 +3,8 @@
         {
             "name": "Linux",
             "includePath": [
-                "${workspaceFolder}/**",
                 "${workspaceFolder}/include",
                 "${workspaceFolder}",
-                "/home/ajinou/Bureau/Projet System/projet-systeme-l3/include",
                 "/usr/include",
                 "/usr/local/include"
             ],

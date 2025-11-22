@@ -7,7 +7,7 @@ SRCDIR = src
 INCDIR = include
 
 # Fichiers sources communs
-COMMON_SRCS = $(SRCDIR)/serialization.c $(SRCDIR)/task_tree.c $(SRCDIR)/protocol.c $(SRCDIR)/execution.c
+COMMON_SRCS = $(SRCDIR)/serialization.c $(SRCDIR)/task_tree.c $(SRCDIR)/execution.c
 COMMON_OBJS = $(COMMON_SRCS:.c=.o)
 
 # Fichiers sources du démon

@@ -6,8 +6,13 @@
     },
     {
         "directory": "/home/ajinou/Bureau/Projet System/projet-systeme-l3",
-        "command": "gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/task_tree.c -o src/task_tree.c",
+        "command": "gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/task_tree.c -o src/task_tree.o",
         "file": "src/task_tree.c"
+    },
+    {
+        "directory": "/home/ajinou/Bureau/Projet System/projet-systeme-l3",
+        "command": "gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/execution.c -o src/execution.o",
+        "file": "src/execution.c"
     },
     {
         "directory": "/home/ajinou/Bureau/Projet System/projet-systeme-l3",
@@ -18,16 +23,5 @@
         "directory": "/home/ajinou/Bureau/Projet System/projet-systeme-l3",
         "command": "gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/tadmor.c -o src/tadmor.o",
         "file": "src/tadmor.c"
-    },
-    {
-        "directory": "/home/ajinou/Bureau/Projet System/projet-systeme-l3",
-        "command": "gcc -Wall -Wextra -std=c11 -g -Iinclude -c src/protocol.c -o src/protocol.o",
-        "file": "src/protocol.c"
-    },
-    {
-        "directory": "/home/ajinou/Bureau/Projet System/projet-systeme-l3",
-        "command": "gcc -Wall -Wextra -std=c11 -g -Iinclude test_t1.2_t1.4.c src/task_tree.c src/serialization.c -o test_t1.2_t1.4",
-        "file": "test_t1.2_t1.4.c"
     }
 ]
-

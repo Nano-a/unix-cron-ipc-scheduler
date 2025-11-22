@@ -162,22 +162,14 @@ static int load_command_from_dir(const char *cmd_dir, command_t **cmd_out) {
         cmd->argc = 0;
         cmd->argv = NULL;
         
-        // Compter les sous-répertoires
+        // D'abord, trouver le maximum index pour connaître la taille
         DIR *dir = opendir(cmd_dir);
         if (!dir) {
             free(cmd);
             return -1;
         }
         
-        size_t capacity = 8;
-        size_t count = 0;
-        command_t **cmds = calloc(capacity, sizeof(command_t *));
-        if (!cmds) {
-            closedir(dir);
-            free(cmd);
-            return -1;
-        }
-
+        uint32_t max_idx = 0;
         struct dirent *entry;
         while ((entry = readdir(dir)) != NULL) {
             if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
@@ -197,56 +189,58 @@ static int load_command_from_dir(const char *cmd_dir, command_t **cmd_out) {
             if (!is_num) {
                 continue;
             }
-
             uint32_t idx = (uint32_t)strtoul(entry->d_name, NULL, 10);
-            if (idx >= capacity) {
-                size_t new_cap = capacity;
-                while (new_cap <= idx) {
-                    new_cap *= 2;
-                }
-                command_t **tmp = realloc(cmds, new_cap * sizeof(command_t *));
-                if (!tmp) {
-                    for (size_t i = 0; i < count; ++i) {
-                        free_command(cmds[i]);
-                    }
-                    free(cmds);
-                    closedir(dir);
-                    free(cmd);
-                    return -1;
-                }
-                memset(tmp + capacity, 0, (new_cap - capacity) * sizeof(command_t *));
-                cmds = tmp;
-                capacity = new_cap;
+            if (idx > max_idx) {
+                max_idx = idx;
             }
-
-            len = snprintf(path, sizeof(path), "%s/%s", cmd_dir, entry->d_name);
+        }
+        closedir(dir);
+        
+        // Allouer le tableau avec la bonne taille (max_idx + 1)
+        uint32_t count = max_idx + 1;
+        command_t **cmds = calloc(count, sizeof(command_t *));
+        if (!cmds) {
+            free(cmd);
+            return -1;
+        }
+        
+        // Parcourir dans l'ordre numérique (0, 1, 2, ...)
+        for (uint32_t i = 0; i < count; ++i) {
+            len = snprintf(path, sizeof(path), "%s/%u", cmd_dir, i);
             if (len < 0 || len >= (int)sizeof(path)) {
-                for (size_t i = 0; i < count; ++i) {
-                    free_command(cmds[i]);
+                for (uint32_t j = 0; j < i; ++j) {
+                    free_command(cmds[j]);
                 }
                 free(cmds);
-                closedir(dir);
                 free(cmd);
                 errno = ENAMETOOLONG;
                 return -1;
             }
-
-            if (load_command_from_dir(path, &cmds[idx]) < 0) {
-                for (size_t i = 0; i < count; ++i) {
-                    free_command(cmds[i]);
+            
+            // Vérifier que le répertoire existe
+            struct stat st;
+            if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode)) {
+                // Répertoire manquant, erreur
+                for (uint32_t j = 0; j < i; ++j) {
+                    free_command(cmds[j]);
                 }
                 free(cmds);
-                closedir(dir);
+                free(cmd);
+                errno = ENOENT;
+                return -1;
+            }
+            
+            if (load_command_from_dir(path, &cmds[i]) < 0) {
+                for (uint32_t j = 0; j < i; ++j) {
+                    free_command(cmds[j]);
+                }
+                free(cmds);
                 free(cmd);
                 return -1;
             }
-            if (idx >= count) {
-                count = idx + 1;
-            }
         }
-        closedir(dir);
 
-        cmd->nb_cmds = (uint32_t)count;
+        cmd->nb_cmds = count;
         cmd->cmds = cmds;
     }
 
