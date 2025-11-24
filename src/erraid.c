@@ -109,6 +109,11 @@ int should_execute_task(const task_t *task) {
         return 0;
     }
 
+    // Cron-like comportement : n'exécuter qu'au changement de minute
+    if (tm_now.tm_sec != 0) {
+        return 0;
+    }
+
     if (!(task->timing.minutes & (1ULL << tm_now.tm_min))) {
         return 0;
     }
