@@ -176,12 +176,22 @@ void daemon_loop(const char *run_dir) {
 }
 
 static void usage(const char *prog) {
-    fprintf(stderr, "Usage: %s -r <run_dir>\n", prog);
+    fprintf(stderr, "Usage: %s [-r <run_dir>]\n", prog);
+    fprintf(stderr, "  -r <run_dir>  Répertoire de travail (défaut: /tmp/$USER/erraid)\n");
 }
 
 int main(int argc, char **argv) {
     const char *run_dir = NULL;
+    char default_run_dir[512];
     int opt;
+
+    // Gérer --help et -h avant getopt
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            usage(argv[0]);
+            return EXIT_SUCCESS;
+        }
+    }
 
     while ((opt = getopt(argc, argv, "r:")) != -1) {
         switch (opt) {
@@ -194,9 +204,19 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Si -r n'est pas fourni, utiliser la valeur par défaut /tmp/$USER/erraid
     if (!run_dir) {
-        usage(argv[0]);
-        return EXIT_FAILURE;
+        const char *user = getenv("USER");
+        if (!user) {
+            fprintf(stderr, "Erreur: variable d'environnement USER non définie\n");
+            return EXIT_FAILURE;
+        }
+        int len = snprintf(default_run_dir, sizeof(default_run_dir), "/tmp/%s/erraid", user);
+        if (len < 0 || len >= (int)sizeof(default_run_dir)) {
+            fprintf(stderr, "Erreur: chemin par défaut trop long\n");
+            return EXIT_FAILURE;
+        }
+        run_dir = default_run_dir;
     }
 
     if (init_task_directory(run_dir) < 0) {
