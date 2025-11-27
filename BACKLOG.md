@@ -243,17 +243,17 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 
 ---
 
-## 🎯 JALON 2 - 12 décembre 2025
+## 🎯 JALON 2 - 8 décembre 2025
 
 ### T2.1 - Architecture du protocole de communication
 - **Difficulté** : **\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 3h
-- **Date de début** : 22 novembre 2025, 14h00
-- **Deadline** : 24 novembre 2025, 18h00
+- **Date de début** : 27 novembre 2025, 18h00
+- **Deadline** : 27 novembre 2025, 18h00
 - **Branche Git** : `feature/protocol-architecture`
 - **Prérequis** : T1.3 (jalon 1 terminé)
-- **Responsable** : À assigner
+- **Responsable** : AJINOU Abderrahman
 - **Description** :
   - Définir les structures `request_t` et `response_t`
   - Définir tous les opcodes (LIST, CREATE, COMBINE, REMOVE, etc.)
@@ -268,11 +268,12 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Difficulté** : **\*\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 4h
-- **Date de début** : 24 novembre 2025, 18h00
-- **Deadline** : 26 novembre 2025, 18h00
+- **Date de début** : 27 novembre 2025, 23h00
+- **Deadline** : 29 novembre 2025, 18h00
 - **Branche Git** : `feature/named-pipes`
 - **Prérequis** : T2.1 (architecture protocole)
-- **Responsable** : À assigner
+- **Responsable** : Ahmed
+- **Justification** : Ahmed a travaillé sur les appels système de base au Jalon 1 (task_tree avec gestion fichiers/répertoires). Les tubes nommés (FIFO) sont un mécanisme système similaire, donc cohérent avec ses compétences. Cette tâche est la base de la communication, donc logique qu'elle soit faite tôt par quelqu'un qui maîtrise les appels système.
 - **Description** :
   - Implémenter `init_pipes` (création des FIFO avec mkfifo)
   - Implémenter `open_pipes` pour le démon (lecture request, écriture reply)
@@ -283,15 +284,16 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 
 ---
 
-### T2.4 - Module protocole (sérialisation messages)
+### T2.3 - Module protocole (sérialisation messages)
 - **Difficulté** : **\*\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 5h
-- **Date de début** : 26 novembre 2025, 18h00
-- **Deadline** : 28 novembre 2025, 18h00
+- **Date de début** : 29 novembre 2025, 18h00
+- **Deadline** : 1 décembre 2025, 18h00
 - **Branche Git** : `feature/protocol-serialization`
 - **Prérequis** : T2.1 (architecture protocole), T1.6 (sérialisation)
-- **Responsable** : À assigner
+- **Responsable** : Pitel
+- **Justification** : Pitel a implémenté toute la sérialisation au Jalon 1 (T1.5 et T1.6). Cette tâche réutilise directement ces compétences pour sérialiser les messages du protocole. C'est une continuité naturelle de son travail précédent.
 - **Description** :
   - Implémenter `send_request` (sérialisation de toutes les requêtes)
   - Implémenter `receive_request` (désérialisation)
@@ -302,15 +304,35 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 
 ---
 
+### T2.4 - Démon - Intégration requêtes dans la boucle
+- **Difficulté** : **\*\*\***
+- **Jalon** : Jalon 2
+- **Durée estimée** : 4h
+- **Date de début** : 1 décembre 2025, 18h00
+- **Deadline** : 2 décembre 2025, 18h00
+- **Branche Git** : `feature/request-handling`
+- **Prérequis** : T2.2 (tubes nommés), T2.3 (sérialisation), T1.11 (boucle principale)
+- **Responsable** : Ahmed
+- **Justification** : Ahmed a fait T2.2 (tubes nommés), donc il connaît déjà le mécanisme de communication. Cette tâche modifie `daemon_loop` et utilise `select()` pour gérer les requêtes de manière non-bloquante, ce qui nécessite une bonne compréhension des appels système. C'est une extension logique de son travail sur les tubes nommés.
+- **Description** :
+  - Modifier `daemon_loop` pour gérer les requêtes
+  - Utiliser `select()` pour gérer requêtes et exécution de manière non-bloquante
+  - Implémenter `handle_request` (orchestration de toutes les requêtes)
+  - Gérer les timeouts (1 seconde pour vérifier les tâches)
+- **Livrable** : Démon répondant aux requêtes client tout en exécutant les tâches
+
+---
+
 ### T2.5 - Client - Parsing des arguments
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 4h
-- **Date de début** : 28 novembre 2025, 18h00
-- **Deadline** : 30 novembre 2025, 18h00
+- **Date de début** : 2 décembre 2025, 18h00
+- **Deadline** : 3 décembre 2025, 18h00
 - **Branche Git** : `feature/client-parsing`
-- **Prérequis** : T2.4 (protocole sérialisation)
-- **Responsable** : À assigner
+- **Prérequis** : T2.3 (protocole sérialisation)
+- **Responsable** : Pitel
+- **Justification** : Pitel a fait T2.3 (sérialisation messages), donc il connaît le format des requêtes. Le parsing des arguments client doit construire ces requêtes, donc c'est une continuité logique. De plus, cette tâche est indépendante côté client et peut être faite en parallèle avec T2.4.
 - **Description** :
   - Implémenter le parsing avec `getopt`
   - Parser les options `-l`, `-x`, `-o`, `-e`, `-c`, `-s`, `-r`, `-q`
@@ -326,11 +348,12 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 5h
-- **Date de début** : 30 novembre 2025, 18h00
-- **Deadline** : 2 décembre 2025, 18h00
+- **Date de début** : 3 décembre 2025, 18h00
+- **Deadline** : 4 décembre 2025, 18h00
 - **Branche Git** : `feature/client-queries`
-- **Prérequis** : T2.5 (parsing arguments), T2.4 (protocole)
-- **Responsable** : À assigner
+- **Prérequis** : T2.5 (parsing arguments), T2.3 (protocole)
+- **Responsable** : Pitel
+- **Justification** : Pitel a fait T2.5 (parsing), donc il connaît déjà comment les arguments sont parsés. Cette tâche utilise ces arguments parsés pour envoyer les requêtes et formater les réponses. C'est une suite logique de son travail sur le client. Cela regroupe toutes les fonctionnalités client dans un même flux de travail.
 - **Description** :
   - Implémenter `cmd_list` (liste des tâches)
   - Implémenter `cmd_times_exitcodes` (historique)
@@ -345,11 +368,12 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 3h
-- **Date de début** : 28 novembre 2025, 18h00
-- **Deadline** : 30 novembre 2025, 18h00
+- **Date de début** : 4 décembre 2025, 18h00
+- **Deadline** : 5 décembre 2025, 18h00
 - **Branche Git** : `feature/daemon-list`
-- **Prérequis** : T2.4 (protocole), T1.7 (lecture arborescence)
-- **Responsable** : À assigner
+- **Prérequis** : T2.3 (protocole), T2.4 (intégration requêtes), T1.7 (lecture arborescence)
+- **Responsable** : Ahmed
+- **Justification** : Ahmed a fait T2.4 (intégration requêtes dans la boucle), donc il connaît déjà `handle_request` et le mécanisme de traitement. Cette tâche implémente une requête spécifique dans ce framework qu'il a mis en place. De plus, Ahmed a travaillé sur la lecture d'arborescence au Jalon 1 (T1.7), donc il maîtrise `load_task_from_dir` et `list_all_tasks`.
 - **Description** :
   - Implémenter traitement de `OPCODE_LIST` dans `handle_request`
   - Charger toutes les tâches depuis le disque avec `list_all_tasks`
@@ -364,11 +388,12 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 3h
-- **Date de début** : 1er décembre 2025, 18h00
-- **Deadline** : 3 décembre 2025, 18h00
+- **Date de début** : 5 décembre 2025, 18h00
+- **Deadline** : 6 décembre 2025, 18h00
 - **Branche Git** : `feature/daemon-times`
-- **Prérequis** : T2.4 (protocole), T1.12 (logs)
-- **Responsable** : À assigner
+- **Prérequis** : T2.3 (protocole), T2.4 (intégration requêtes), T1.12 (logs)
+- **Responsable** : AJINOU Abderrahman
+- **Justification** : AJINOU a fait T1.11 (boucle principale du démon) au Jalon 1, donc il connaît bien l'architecture du démon et l'orchestration des tâches. Cette tâche traite les logs d'exécution (times-exitcodes) qui sont directement liés à l'exécution des tâches qu'il a orchestrée. Cela lui permet d'avoir une vue d'ensemble du démon (architecture, logs, intégration) avant l'intégration finale (T2.10). C'est une extension naturelle de son travail sur le démon.
 - **Description** :
   - Implémenter `read_execution_logs` (lecture times-exitcodes)
   - Traitement de `OPCODE_TIMES_EXITCODES` dans `handle_request`
@@ -383,11 +408,12 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 3h
-- **Date de début** : 3 décembre 2025, 18h00
-- **Deadline** : 4 décembre 2025, 18h00
+- **Date de début** : 6 décembre 2025, 18h00
+- **Deadline** : 7 décembre 2025, 18h00
 - **Branche Git** : `feature/daemon-outputs`
-- **Prérequis** : T2.4 (protocole), T1.12 (logs)
-- **Responsable** : À assigner
+- **Prérequis** : T2.3 (protocole), T2.4 (intégration requêtes), T1.12 (logs)
+- **Responsable** : AJINOU Abderrahman
+- **Justification** : AJINOU a fait T1.9 (exécution commandes simples) et T1.11 (boucle principale) au Jalon 1, donc il connaît bien comment les sorties stdout/stderr sont capturées et sauvegardées lors de l'exécution. Cette tâche lit ces fichiers sauvegardés pour les renvoyer au client, ce qui est cohérent avec son travail précédent sur l'exécution. Cela complète sa série de tâches sur le démon (T2.1 architecture, T2.8 logs, T2.9 sorties, T2.10 intégration) et lui donne une vue complète avant l'intégration finale.
 - **Description** :
   - Implémenter `read_stdout` et `read_stderr`
   - Traitement de `OPCODE_STDOUT` et `OPCODE_STDERR`
@@ -398,34 +424,15 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 
 ---
 
-### T2.10 - Démon - Intégration requêtes dans la boucle
-- **Difficulté** : **\*\*\***
-- **Jalon** : Jalon 2
-- **Durée estimée** : 4h
-- **Date de début** : 26 novembre 2025, 18h00
-- **Deadline** : 28 novembre 2025, 18h00
-- **Branche Git** : `feature/request-handling`
-- **Prérequis** : T2.2 (tubes nommés), T1.11 (boucle principale)
-- **Responsable** : À assigner
-- **Description** :
-  - Modifier `daemon_loop` pour gérer les requêtes
-  - Utiliser `select()` pour gérer requêtes et exécution de manière non-bloquante
-  - Implémenter `handle_request` (orchestration de toutes les requêtes)
-  - Gérer les timeouts (1 seconde pour vérifier les tâches)
-- **Livrable** : Démon répondant aux requêtes client tout en exécutant les tâches
-
----
-
-### T2.3 - Intégration et tests du jalon 2
+### T2.10 - Intégration et tests du jalon 2
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 5h
-- **Date de début** : 4 décembre 2025, 18h00
-- **Deadline** : 11 décembre 2025, 18h00
+- **Date de début** : 6 décembre 2025, 18h00
+- **Deadline** : 8 décembre 2025, 18h00
 - **Branche Git** : `integration/jalon-2`
 - **Prérequis** : T2.6 (client consultatif), T2.7, T2.8, T2.9 (toutes requêtes démon)
-- **Responsable** : À assigner
-- **Description** :
+- **Responsable** : AJINOU Abderrahman
   - Tests de toutes les requêtes consultatives
   - Tests de communication client-serveur
   - Tests avec plusieurs clients (séquentiels)
