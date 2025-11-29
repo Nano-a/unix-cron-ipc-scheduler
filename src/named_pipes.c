@@ -23,7 +23,15 @@ int build_pipe_path(char *buffer, size_t size, const char *run_dir, const char *
 int init_pipes(const char *run_dir) {
     char req_path[512];
     char rep_path[512];
+    char pipe_dir[512];
 
+    // Construire le path du dossier pipes
+    snprintf(pipe_dir, sizeof(pipe_dir), "%s/pipes", run_dir);
+
+    // Crée le dossier si inexistant
+    mkdir(pipe_dir, 0777);
+
+    // Construire les chemins des FIFOs
     if (build_pipe_path(req_path, sizeof(req_path), run_dir, REQUEST_FIFO) < 0 ||
         build_pipe_path(rep_path, sizeof(rep_path), run_dir, REPLY_FIFO) < 0) {
         return -1;
@@ -47,8 +55,8 @@ int init_pipes(const char *run_dir) {
     return 0;
 }
 
-// ---------------------------------------------------------------------
-// DAEMON : ouvre request en lecture, reply en écriture
+// --------------------------------------------------------------------
+// DAEMON : ouvre request en lecture+écriture, reply en lecture+écriture
 // ---------------------------------------------------------------------
 int open_pipes_daemon(pipes_t *p, const char *run_dir) {
     char req_path[512];
@@ -57,13 +65,15 @@ int open_pipes_daemon(pipes_t *p, const char *run_dir) {
     build_pipe_path(req_path, sizeof(req_path), run_dir, REQUEST_FIFO);
     build_pipe_path(rep_path, sizeof(rep_path), run_dir, REPLY_FIFO);
 
-    p->req_fd = open(req_path, O_RDONLY);
+    // Ouvrir le pipe de requête en lecture+écriture pour éviter blocage
+    p->req_fd = open(req_path, O_RDWR);
     if (p->req_fd < 0) {
         perror("daemon open request");
         return -1;
     }
 
-    p->rep_fd = open(rep_path, O_WRONLY);
+    // Ouvrir le pipe de réponse en lecture+écriture pour éviter blocage
+    p->rep_fd = open(rep_path, O_RDWR);
     if (p->rep_fd < 0) {
         perror("daemon open reply");
         close(p->req_fd);
