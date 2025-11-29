@@ -1,4 +1,4 @@
-#include "named_pipes.h"
+#include "protocol.h"
 
 #include <stdio.h>
 #include <stdlib.h>
