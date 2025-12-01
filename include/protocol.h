@@ -161,26 +161,39 @@ void free_request(request_t *req);
  */
 void free_response(response_t *resp);
 
-// Noms des FIFOs
-#define REQUEST_FIFO "request.fifo"
-#define REPLY_FIFO   "reply.fifo"
+// ============================================================================
+// Fonctions de gestion des tubes nommés (FIFO)
+// ============================================================================
 
-// Structure contenant les deux descripteurs de fichier
-typedef struct {
-    int req_fd;   // request fifo
-    int rep_fd;   // reply fifo
-} pipes_t;
-
-// Initialise les tubes nommés (mkfifo)
+/**
+ * Initialise les tubes nommés (FIFO) pour la communication.
+ * Crée les FIFO request et reply dans le répertoire run_dir s'ils n'existent pas.
+ *
+ * @param run_dir Répertoire de base (ex: /tmp/$USER/erraid)
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
 int init_pipes(const char *run_dir);
 
-// Fonctions pour construire les chemins (internes, mais tu peux les exposer si besoin)
-int build_pipe_path(char *buffer, size_t size, const char *run_dir, const char *name);
+/**
+ * Ouvre les tubes nommés pour le démon.
+ * Le démon lit les requêtes et écrit les réponses.
+ *
+ * @param run_dir Répertoire de base
+ * @param request_fd_out Pointeur qui recevra le descripteur de lecture des requêtes
+ * @param reply_fd_out   Pointeur qui recevra le descripteur d'écriture des réponses
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
+int open_pipes_daemon(const char *run_dir, int *request_fd_out, int *reply_fd_out);
 
-// Ouverture côté démon : lit request, écrit reply
-int open_pipes_daemon(pipes_t *p, const char *run_dir);
-
-// Ouverture côté client : écrit request, lit reply
-int open_pipes_client(pipes_t *p, const char *run_dir);
+/**
+ * Ouvre les tubes nommés pour le client.
+ * Le client écrit les requêtes et lit les réponses.
+ *
+ * @param run_dir Répertoire de base
+ * @param request_fd_out Pointeur qui recevra le descripteur d'écriture des requêtes
+ * @param reply_fd_out   Pointeur qui recevra le descripteur de lecture des réponses
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
+int open_pipes_client(const char *run_dir, int *request_fd_out, int *reply_fd_out);
 
 #endif // PROTOCOL_H
