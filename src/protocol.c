@@ -15,7 +15,7 @@ int send_request(int fd, const request_t *req) {
     //List
     case REQ_LIST:
     case REQ_TERMINATE:
-        /* aucun payload */
+    
         return 0;
 
     //Create
