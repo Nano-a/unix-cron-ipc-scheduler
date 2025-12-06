@@ -174,9 +174,6 @@ int open_pipes_client(const char *run_dir, int *request_fd_out, int *reply_fd_ou
     *reply_fd_out = reply_fd;
     return 0;
 }
-<<<<<<< HEAD
-=======
-
 
 //helpers
 static ssize_t local_robust_write(int fd, const void *buf, size_t count) {
@@ -582,5 +579,3 @@ void free_response(response_t *resp) {
 
     free(resp);
 }
- 
->>>>>>> feature/protocol-serialization
