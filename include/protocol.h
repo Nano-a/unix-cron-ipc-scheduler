@@ -100,6 +100,41 @@ typedef struct {
 } response_t;
 
 // ============================================================================
+// Prototypes des fonctions de gestion des FIFO
+// ============================================================================
+
+/**
+ * Initialise les tubes nommés (FIFO) pour la communication.
+ * Crée les FIFO request et reply dans le répertoire run_dir s'ils n'existent pas.
+ *
+ * @param run_dir Répertoire de base (ex: /tmp/$USER/erraid)
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
+int init_pipes(const char *run_dir);
+
+/**
+ * Ouvre les tubes nommés pour le démon.
+ * Le démon lit les requêtes et écrit les réponses.
+ *
+ * @param run_dir Répertoire de base
+ * @param request_fd_out Pointeur qui recevra le descripteur de lecture des requêtes
+ * @param reply_fd_out   Pointeur qui recevra le descripteur d'écriture des réponses
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
+int open_pipes_daemon(const char *run_dir, int *request_fd_out, int *reply_fd_out);
+
+/**
+ * Ouvre les tubes nommés pour le client.
+ * Le client écrit les requêtes et lit les réponses.
+ *
+ * @param run_dir Répertoire de base
+ * @param request_fd_out Pointeur qui recevra le descripteur d'écriture des requêtes
+ * @param reply_fd_out   Pointeur qui recevra le descripteur de lecture des réponses
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
+int open_pipes_client(const char *run_dir, int *request_fd_out, int *reply_fd_out);
+
+// ============================================================================
 // Prototypes des fonctions de sérialisation/désérialisation
 // ============================================================================
 
@@ -144,7 +179,7 @@ int send_response(int fd, const response_t *resp);
 int receive_response(int fd, response_t **resp);
 
 // ============================================================================
-// Fonctions de libération mémoire
+// Prototypes des fonctions de libération de mémoire
 // ============================================================================
 
 /**
@@ -160,40 +195,5 @@ void free_request(request_t *req);
  * @param resp Réponse à libérer (peut être NULL)
  */
 void free_response(response_t *resp);
-
-// ============================================================================
-// Fonctions de gestion des tubes nommés (FIFO)
-// ============================================================================
-
-/**
- * Initialise les tubes nommés (FIFO) pour la communication.
- * Crée les FIFO request et reply dans le répertoire run_dir s'ils n'existent pas.
- *
- * @param run_dir Répertoire de base (ex: /tmp/$USER/erraid)
- * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
- */
-int init_pipes(const char *run_dir);
-
-/**
- * Ouvre les tubes nommés pour le démon.
- * Le démon lit les requêtes et écrit les réponses.
- *
- * @param run_dir Répertoire de base
- * @param request_fd_out Pointeur qui recevra le descripteur de lecture des requêtes
- * @param reply_fd_out   Pointeur qui recevra le descripteur d'écriture des réponses
- * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
- */
-int open_pipes_daemon(const char *run_dir, int *request_fd_out, int *reply_fd_out);
-
-/**
- * Ouvre les tubes nommés pour le client.
- * Le client écrit les requêtes et lit les réponses.
- *
- * @param run_dir Répertoire de base
- * @param request_fd_out Pointeur qui recevra le descripteur d'écriture des requêtes
- * @param reply_fd_out   Pointeur qui recevra le descripteur de lecture des réponses
- * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
- */
-int open_pipes_client(const char *run_dir, int *request_fd_out, int *reply_fd_out);
 
 #endif // PROTOCOL_H
