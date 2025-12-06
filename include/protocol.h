@@ -1,128 +1,199 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-#include <stdint.h>
 #include "serialization.h"
+#include "task_tree.h"
+#include <stdint.h>
+#include <stddef.h>
 
-//OPCODES
-#define OPCODE_LIST        0x4C53  /* 'LS' */
-#define OPCODE_CREATE      0x4352  /* 'CR' */
-#define OPCODE_COMBINE     0x4342  /* 'CB' */
-#define OPCODE_REMOVE      0x524D  /* 'RM' */
-#define OPCODE_TIMES       0x5458  /* 'TX' */
-#define OPCODE_STDOUT      0x534F  /* 'SO' */
-#define OPCODE_STDERR      0x5345  /* 'SE' */
-#define OPCODE_TERMINATE   0x4B49  /* 'TM' */
+// ============================================================================
+// OPCODES - Codes d'opération pour les requêtes client -> démon
+// ============================================================================
+#define OPCODE_LIST           0x4c53  // 'LS' - Lister toutes les tâches
+#define OPCODE_CREATE         0x4352  // 'CR' - Créer une nouvelle tâche simple
+#define OPCODE_COMBINE        0x4342  // 'CB' - Créer une tâche par combinaison
+#define OPCODE_REMOVE         0x524d  // 'RM' - Supprimer une tâche
+#define OPCODE_TIMES_EXITCODES 0x5458  // 'TX' - Historique d'exécution
+#define OPCODE_STDOUT        0x534f  // 'SO' - Sortie standard
+#define OPCODE_STDERR        0x5345  // 'SE' - Sortie erreur
+#define OPCODE_TERMINATE     0x544d  // 'TM' - Terminer le démon
 
-//ANSTYPE + ERROR
-#define ANSTYPE_OK         0x4F4B  /* 'OK' */
-#define ANSTYPE_ERROR      0x4552  /* 'ER' */
+// ============================================================================
+// ANSTYPE - Types de réponse démon -> client
+// ============================================================================
+#define ANSTYPE_OK           0x4f4b  // 'OK' - Requête réussie
+#define ANSTYPE_ERROR        0x4552  // 'ER' - Requête échouée
 
-#define ERR_NOTFOUND       0x4E46  /* 'NF' */
-#define ERR_NOTRUN         0x4E52  /* 'NR' */
+// ============================================================================
+// ERRCODE - Codes d'erreur pour les réponses ERROR
+// ============================================================================
+#define ERRCODE_NOT_FOUND    0x4e46  // 'NF' - Tâche non trouvée
+#define ERRCODE_NOT_RUN      0x4e52  // 'NR' - Tâche jamais exécutée
 
-//REQUETES
-typedef enum {
-    REQ_LIST,
-    REQ_CREATE,
-    REQ_COMBINE,
-    REQ_REMOVE,
-    REQ_TIMES_EXITCODES,
-    REQ_STDOUT,
-    REQ_STDERR,
-    REQ_TERMINATE
-} request_kind_t;
-
-/* Requête COMBINE */
+// ============================================================================
+// Structure pour les requêtes (client -> démon)
+// ============================================================================
 typedef struct {
-    timing_t timing;
-    uint16_t type_comb;    /* TYPE <uint16> */
-    uint32_t nbtasks;
-    uint64_t *taskids;     /* nbtasks éléments */
-} request_combine_t;
-
-/* Requête CREATE */
-typedef struct {
-    timing_t timing;
-    uint32_t argc;
-    char **argv;
-} request_create_t;
-
-/* Requêtes avec uniquement un taskid : REMOVE, TX, SO, SE */
-typedef struct {
-    uint64_t taskid;
-} request_taskid_t;
-
-/* Structure principale request_t */
-typedef struct {
-    request_kind_t kind;
-    uint16_t opcode;
-
+    uint16_t opcode;  // Code d'opération (OPCODE_*)
     union {
-        request_create_t  create;
-        request_combine_t combine;
-        request_taskid_t  taskid_req;
-        /* LIST & TERMINATE n'ont pas de payload */
-    };
+        // Pour OPCODE_CREATE
+        struct {
+            timing_t timing;
+            uint32_t argc;
+            char **argv;
+        } create;
+        
+        // Pour OPCODE_COMBINE
+        struct {
+            timing_t timing;
+            uint16_t type;        // Type de combinaison (CMD_TYPE_SIMPLE ou CMD_TYPE_SEQUENCE)
+            uint32_t nbtasks;     // Nombre de tâches à combiner
+            uint64_t *taskids;    // Tableau des identifiants de tâches
+        } combine;
+        
+        // Pour OPCODE_REMOVE, OPCODE_TIMES_EXITCODES, OPCODE_STDOUT, OPCODE_STDERR
+        struct {
+            uint64_t taskid;
+        } query;
+        
+        // Pour OPCODE_LIST et OPCODE_TERMINATE : pas de données supplémentaires
+    } u;
 } request_t;
 
-//Réponses
-/* Utilisé pour LIST */
+// ============================================================================
+// Structure pour les réponses (démon -> client)
+// ============================================================================
 typedef struct {
-    uint64_t taskid;
-    timing_t timing;
-    char *commandline; /* string */
-} list_taskinfo_t;
-
-/* Utilisé pour TX */
-typedef struct {
-    int64_t time;
-    uint16_t exitcode;
-} exec_info_t;
-
-/* Réponse principale */
-typedef struct {
-    uint16_t anstype;
-
+    uint16_t anstype;  // Type de réponse (ANSTYPE_OK ou ANSTYPE_ERROR)
     union {
-        /* -------- OK responses -------- */
+        // Réponse OK pour CREATE ou COMBINE
         struct {
-            uint32_t nbtasks;
-            list_taskinfo_t *tasks;
-        } list_ok;
-
-        struct {
-            uint64_t taskid;
+            uint64_t taskid;  // Identifiant de la tâche créée
         } create_ok;
-
+        
+        // Réponse OK pour LIST
         struct {
-            uint64_t taskid;
-        } combine_ok;
-
+            uint32_t nbtasks;  // Nombre de tâches
+            task_t **tasks;    // Tableau de pointeurs vers les tâches
+        } list_ok;
+        
+        // Réponse OK pour TIMES_EXITCODES
         struct {
-            uint32_t nbruns;
-            exec_info_t *runs;
-        } times_ok;
-
+            uint32_t nbruns;        // Nombre d'exécutions
+            int64_t *timestamps;    // Tableau des timestamps (secondes depuis epoch)
+            uint16_t *exitcodes;    // Tableau des codes de retour
+        } times_exitcodes_ok;
+        
+        // Réponse OK pour STDOUT ou STDERR
         struct {
-            char *output;
-        } output_ok; /* stdout + stderr */
-
-        /* -------- ERROR response -------- */
+            char *output;  // Contenu de la sortie (alloué dynamiquement)
+            size_t len;    // Longueur en octets (sans le '\0' final)
+        } output_ok;
+        
+        // Réponse ERROR
         struct {
-            uint16_t errcode;
+            uint16_t errcode;  // Code d'erreur (ERRCODE_*)
         } error;
-    };
+        
+        // Réponse OK pour REMOVE ou TERMINATE : pas de données supplémentaires
+    } u;
 } response_t;
 
-//Fonctions protocol
+// ============================================================================
+// Prototypes des fonctions de gestion des FIFO
+// ============================================================================
+
+/**
+ * Initialise les tubes nommés (FIFO) pour la communication.
+ * Crée les FIFO request et reply dans le répertoire run_dir s'ils n'existent pas.
+ *
+ * @param run_dir Répertoire de base (ex: /tmp/$USER/erraid)
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
+int init_pipes(const char *run_dir);
+
+/**
+ * Ouvre les tubes nommés pour le démon.
+ * Le démon lit les requêtes et écrit les réponses.
+ *
+ * @param run_dir Répertoire de base
+ * @param request_fd_out Pointeur qui recevra le descripteur de lecture des requêtes
+ * @param reply_fd_out   Pointeur qui recevra le descripteur d'écriture des réponses
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
+int open_pipes_daemon(const char *run_dir, int *request_fd_out, int *reply_fd_out);
+
+/**
+ * Ouvre les tubes nommés pour le client.
+ * Le client écrit les requêtes et lit les réponses.
+ *
+ * @param run_dir Répertoire de base
+ * @param request_fd_out Pointeur qui recevra le descripteur d'écriture des requêtes
+ * @param reply_fd_out   Pointeur qui recevra le descripteur de lecture des réponses
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
+int open_pipes_client(const char *run_dir, int *request_fd_out, int *reply_fd_out);
+
+// ============================================================================
+// Prototypes des fonctions de sérialisation/désérialisation
+// ============================================================================
+
+/**
+ * Envoie une requête sur un descripteur de fichier (FIFO).
+ * 
+ * @param fd   Descripteur de fichier ouvert en écriture
+ * @param req  Requête à envoyer (non NULL)
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
 int send_request(int fd, const request_t *req);
-int receive_request(int fd, request_t **out);
 
-int send_response(int fd, const response_t *res);
-int receive_response(int fd, response_t **out);
+/**
+ * Reçoit une requête depuis un descripteur de fichier (FIFO).
+ * 
+ * @param fd   Descripteur de fichier ouvert en lecture
+ * @param req  Pointeur vers un pointeur qui recevra la requête allouée (non NULL)
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ * 
+ * @note La requête doit être libérée avec free_request() après utilisation.
+ */
+int receive_request(int fd, request_t **req);
 
+/**
+ * Envoie une réponse sur un descripteur de fichier (FIFO).
+ * 
+ * @param fd   Descripteur de fichier ouvert en écriture
+ * @param resp Réponse à envoyer (non NULL)
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ */
+int send_response(int fd, const response_t *resp);
+
+/**
+ * Reçoit une réponse depuis un descripteur de fichier (FIFO).
+ * 
+ * @param fd   Descripteur de fichier ouvert en lecture
+ * @param resp Pointeur vers un pointeur qui recevra la réponse allouée (non NULL)
+ * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
+ * 
+ * @note La réponse doit être libérée avec free_response() après utilisation.
+ */
+int receive_response(int fd, response_t **resp);
+
+// ============================================================================
+// Prototypes des fonctions de libération de mémoire
+// ============================================================================
+
+/**
+ * Libère la mémoire allouée pour une requête.
+ * 
+ * @param req Requête à libérer (peut être NULL)
+ */
 void free_request(request_t *req);
-void free_response(response_t *res);
+
+/**
+ * Libère la mémoire allouée pour une réponse.
+ * 
+ * @param resp Réponse à libérer (peut être NULL)
+ */
+void free_response(response_t *resp);
 
 #endif // PROTOCOL_H
