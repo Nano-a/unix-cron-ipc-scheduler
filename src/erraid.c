@@ -3,6 +3,11 @@
 #include "execution.h"
 #include "task_tree.h"
 
+#include "protocol.h"
+#include <sys/select.h>
+#include <sys/time.h>
+#include <errno.h>
+
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -109,11 +114,6 @@ int should_execute_task(const task_t *task) {
         return 0;
     }
 
-    // Cron-like comportement : n'exécuter qu'au changement de minute
-    if (tm_now.tm_sec != 0) {
-        return 0;
-    }
-
     if (!(task->timing.minutes & (1ULL << tm_now.tm_min))) {
         return 0;
     }
@@ -163,40 +163,59 @@ int execute_task(const char *run_dir, const task_t *task) {
 }
 
 void daemon_loop(const char *run_dir) {
-    while (!g_stop) {
-        task_t **tasks = NULL;
-        size_t count = 0;
+    int req_fd = get_request_pipe_fd();   // fourni par protocol.c
+    int maxfd = req_fd;
 
-        if (load_all_tasks(run_dir, &tasks, &count) == 0) {
-            for (size_t i = 0; i < count && !g_stop; ++i) {
-                if (should_execute_task(tasks[i])) {
-                    execute_task(run_dir, tasks[i]);
-                }
-            }
-            free_task_array(tasks, count);
+    while (!g_stop) {
+
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(req_fd, &readfds);
+
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        int ret = select(maxfd + 1, &readfds, NULL, NULL, &tv);
+
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            perror("select");
+            break;
         }
 
-        sleep(1);
+        if (ret == 0) {
+            // timeout : exécution périodique des tâches
+            task_t **tasks = NULL;
+            size_t count = 0;
+
+            if (load_all_tasks(run_dir, &tasks, &count) == 0) {
+                for (size_t i = 0; i < count && !g_stop; ++i) {
+                    if (should_execute_task(tasks[i])) {
+                        execute_task(run_dir, tasks[i]);
+                    }
+                }
+                free_task_array(tasks, count);
+            }
+            continue;
+        }
+
+        // Une requête disponible
+        if (FD_ISSET(req_fd, &readfds)) {
+            handle_request(req_fd);
+        }
     }
 }
 
+
 static void usage(const char *prog) {
-    fprintf(stderr, "Usage: %s [-r <run_dir>]\n", prog);
-    fprintf(stderr, "  -r <run_dir>  Répertoire de travail (défaut: /tmp/$USER/erraid)\n");
+    fprintf(stderr, "Usage: %s -r <run_dir>\n", prog);
 }
 
 int main(int argc, char **argv) {
     const char *run_dir = NULL;
-    char default_run_dir[512];
     int opt;
-
-    // Gérer --help et -h avant getopt
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            usage(argv[0]);
-            return EXIT_SUCCESS;
-        }
-    }
+    pipes_t pipes;
 
     while ((opt = getopt(argc, argv, "r:")) != -1) {
         switch (opt) {
@@ -209,19 +228,9 @@ int main(int argc, char **argv) {
         }
     }
 
-    // Si -r n'est pas fourni, utiliser la valeur par défaut /tmp/$USER/erraid
     if (!run_dir) {
-        const char *user = getenv("USER");
-        if (!user) {
-            fprintf(stderr, "Erreur: variable d'environnement USER non définie\n");
-            return EXIT_FAILURE;
-        }
-        int len = snprintf(default_run_dir, sizeof(default_run_dir), "/tmp/%s/erraid", user);
-        if (len < 0 || len >= (int)sizeof(default_run_dir)) {
-            fprintf(stderr, "Erreur: chemin par défaut trop long\n");
-            return EXIT_FAILURE;
-        }
-        run_dir = default_run_dir;
+        usage(argv[0]);
+        return EXIT_FAILURE;
     }
 
     if (init_task_directory(run_dir) < 0) {
@@ -229,9 +238,22 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    if (init_pipes(run_dir) < 0) {
+        perror("init_pipes");
+        return EXIT_FAILURE;
+    }
+
+    if (open_pipes_daemon(&pipes, run_dir) < 0) {
+        perror("open_pipes_daemon");
+        return EXIT_FAILURE;
+    }
+
+
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
     daemon_loop(run_dir);
+
+    close_pipes(&pipes);
     return EXIT_SUCCESS;
 }

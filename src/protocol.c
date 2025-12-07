@@ -8,6 +8,17 @@
 #include <unistd.h>
 #include <string.h>
 
+pipes_t pipes;
+
+int get_request_pipe_fd(void) {
+    return pipes.req_fd; // ou ton objet pipes global
+}
+
+void close_pipes(pipes_t *p) {
+    if (p->req_fd >= 0) close(p->req_fd);
+    if (p->rep_fd >= 0) close(p->rep_fd);
+}
+
 // ---------------------------------------------------------------------
 // Construit : run_dir/pipes/<name>
 // ---------------------------------------------------------------------
@@ -82,7 +93,6 @@ int open_pipes_daemon(pipes_t *p, const char *run_dir) {
 
     return 0;
 }
-
 // ---------------------------------------------------------------------
 // CLIENT : ouvre request en écriture, reply en lecture
 // ---------------------------------------------------------------------
@@ -107,4 +117,30 @@ int open_pipes_client(pipes_t *p, const char *run_dir) {
     }
 
     return 0;
+}
+
+void handle_request(int fd) {
+    request_t *req = NULL;
+    if (receive_request(fd, &req) < 0) {
+        perror("receive_request");
+        return;
+    }
+
+    response_t *resp = malloc(sizeof(response_t));
+    if (!resp) {
+        perror("malloc response");
+        free_request(req);
+        return;
+    }
+
+    // Initialiser la réponse en erreur
+    resp->anstype = ANSTYPE_ERROR;    // au lieu de 'status = ERROR'
+    resp->u.error.errcode = ERRCODE_GENERIC; // ou autre code d'erreur défini
+
+    if (send_response(fd, resp) < 0) {
+        perror("send_response");
+    }
+
+    free_request(req);
+    free_response(resp);
 }

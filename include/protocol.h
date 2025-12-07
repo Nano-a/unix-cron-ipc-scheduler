@@ -171,6 +171,10 @@ typedef struct {
     int rep_fd;   // reply fifo
 } pipes_t;
 
+int get_request_pipe_fd(void);
+
+void close_pipes(pipes_t *p);
+
 // Initialise les tubes nommés (mkfifo)
 int init_pipes(const char *run_dir);
 
@@ -182,5 +186,8 @@ int open_pipes_daemon(pipes_t *p, const char *run_dir);
 
 // Ouverture côté client : écrit request, lit reply
 int open_pipes_client(pipes_t *p, const char *run_dir);
+
+#define ERRCODE_GENERIC 1
+void handle_request(int fd);
 
 #endif // PROTOCOL_H
