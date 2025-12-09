@@ -114,6 +114,11 @@ int should_execute_task(const task_t *task) {
         return 0;
     }
 
+    // Exécution uniquement au début de la minute (comme cron)
+    if (tm_now.tm_sec != 0) {
+        return 0;
+    }
+
     if (!(task->timing.minutes & (1ULL << tm_now.tm_min))) {
         return 0;
     }
@@ -162,15 +167,39 @@ int execute_task(const char *run_dir, const task_t *task) {
     return 0;
 }
 
-void daemon_loop(const char *run_dir) {
-    int req_fd = get_request_pipe_fd();   // fourni par protocol.c
-    int maxfd = req_fd;
+static void handle_request(int request_fd, int reply_fd) {
+    request_t *req = NULL;
+    if (receive_request(request_fd, &req) < 0) {
+        perror("receive_request");
+        return;
+    }
+
+    response_t *resp = calloc(1, sizeof(response_t));
+    if (!resp) {
+        perror("malloc response");
+        free_request(req);
+        return;
+    }
+
+    // Pour l'instant, retourner ERROR pour tous les opcodes non implémentés
+    resp->anstype = ANSTYPE_ERROR;
+    resp->u.error.errcode = 0x0001; // ERRCODE_GENERIC (valeur temporaire)
+
+    if (send_response(reply_fd, resp) < 0) {
+        perror("send_response");
+    }
+
+    free_request(req);
+    free_response(resp);
+}
+
+void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
+    int maxfd = request_fd;
 
     while (!g_stop) {
-
         fd_set readfds;
         FD_ZERO(&readfds);
-        FD_SET(req_fd, &readfds);
+        FD_SET(request_fd, &readfds);
 
         struct timeval tv;
         tv.tv_sec = 1;
@@ -201,36 +230,61 @@ void daemon_loop(const char *run_dir) {
         }
 
         // Une requête disponible
-        if (FD_ISSET(req_fd, &readfds)) {
-            handle_request(req_fd);
+        if (FD_ISSET(request_fd, &readfds)) {
+            handle_request(request_fd, reply_fd);
         }
     }
 }
 
 
 static void usage(const char *prog) {
-    fprintf(stderr, "Usage: %s -r <run_dir>\n", prog);
+    fprintf(stderr, "Usage: %s [-r <run_dir>]\n", prog);
+    fprintf(stderr, "  -r <run_dir>  Répertoire d'exécution (défaut: /tmp/$USER/erraid)\n");
+    fprintf(stderr, "  -h, --help    Afficher cette aide\n");
 }
 
 int main(int argc, char **argv) {
     const char *run_dir = NULL;
+    char default_run_dir[512];
     int opt;
-    pipes_t pipes;
+    int request_fd = -1;
+    int reply_fd = -1;
 
-    while ((opt = getopt(argc, argv, "r:")) != -1) {
+    // Vérifier --help et -h avant getopt
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            usage(argv[0]);
+            return EXIT_SUCCESS;
+        }
+    }
+
+    while ((opt = getopt(argc, argv, "r:h")) != -1) {
         switch (opt) {
         case 'r':
             run_dir = optarg;
             break;
+        case 'h':
+            usage(argv[0]);
+            return EXIT_SUCCESS;
         default:
             usage(argv[0]);
             return EXIT_FAILURE;
         }
     }
 
+    // Si run_dir n'est pas fourni, utiliser la valeur par défaut
     if (!run_dir) {
-        usage(argv[0]);
-        return EXIT_FAILURE;
+        const char *user = getenv("USER");
+        if (!user) {
+            fprintf(stderr, "Erreur: variable d'environnement USER non définie\n");
+            return EXIT_FAILURE;
+        }
+        int len = snprintf(default_run_dir, sizeof(default_run_dir), "/tmp/%s/erraid", user);
+        if (len < 0 || len >= (int)sizeof(default_run_dir)) {
+            fprintf(stderr, "Erreur: chemin par défaut trop long\n");
+            return EXIT_FAILURE;
+        }
+        run_dir = default_run_dir;
     }
 
     if (init_task_directory(run_dir) < 0) {
@@ -243,17 +297,17 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (open_pipes_daemon(&pipes, run_dir) < 0) {
+    if (open_pipes_daemon(run_dir, &request_fd, &reply_fd) < 0) {
         perror("open_pipes_daemon");
         return EXIT_FAILURE;
     }
 
-
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
-    daemon_loop(run_dir);
+    daemon_loop(run_dir, request_fd, reply_fd);
 
-    close_pipes(&pipes);
+    if (request_fd >= 0) close(request_fd);
+    if (reply_fd >= 0) close(reply_fd);
     return EXIT_SUCCESS;
 }
