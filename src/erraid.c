@@ -2,6 +2,11 @@
 
 #include "execution.h"
 #include "task_tree.h"
+#include "protocol.h"
+
+#include <sys/select.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #include <ctype.h>
 #include <dirent.h>
@@ -163,22 +168,60 @@ int execute_task(const char *run_dir, const task_t *task) {
 }
 
 void daemon_loop(const char *run_dir) {
-    while (!g_stop) {
-        task_t **tasks = NULL;
-        size_t count = 0;
+    // 1. Initialise les FIFO
+    if (init_pipes(run_dir) < 0) {
+        perror("init_pipes");
+        return;
+    }
 
-        if (load_all_tasks(run_dir, &tasks, &count) == 0) {
-            for (size_t i = 0; i < count && !g_stop; ++i) {
-                if (should_execute_task(tasks[i])) {
-                    execute_task(run_dir, tasks[i]);
-                }
-            }
-            free_task_array(tasks, count);
+    // 2. Ouvre les FIFO
+    int request_fd, reply_fd;
+    if (open_pipes_daemon(run_dir, &request_fd, &reply_fd) < 0) {
+        perror("open_pipes_daemon");
+        return;
+    }
+
+    while (!g_stop) {
+
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(request_fd, &readfds);
+
+        struct timeval tv;
+        tv.tv_sec = 1;   // timeout = 1 seconde
+        tv.tv_usec = 0;
+
+        int ready = select(request_fd + 1, &readfds, NULL, NULL, &tv);
+
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            perror("select");
+            break;
         }
 
-        sleep(1);
+        if (ready > 0 && FD_ISSET(request_fd, &readfds)) {
+            // Requête disponible
+            handle_request(request_fd, reply_fd, run_dir);
+        } else {
+            // Timeout : exécution des tâches
+            task_t **tasks = NULL;
+            size_t count = 0;
+
+            if (load_all_tasks(run_dir, &tasks, &count) == 0) {
+                for (size_t i = 0; i < count && !g_stop; ++i) {
+                    if (should_execute_task(tasks[i])) {
+                        execute_task(run_dir, tasks[i]);
+                    }
+                }
+                free_task_array(tasks, count);
+            }
+        }
     }
+
+    close(request_fd);
+    close(reply_fd);
 }
+
 
 static void usage(const char *prog) {
     fprintf(stderr, "Usage: %s [-r <run_dir>]\n", prog);
@@ -231,6 +274,9 @@ int main(int argc, char **argv) {
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
+
+    printf("Daemon running in directory %s\n", run_dir);
+    fflush(stdout);
 
     daemon_loop(run_dir);
     return EXIT_SUCCESS;

@@ -3,8 +3,3 @@
 
 #include <stdio.h>
 
-int main(void) {
-    printf("tadmor: Client non encore implémenté\n");
-    return 0;
-}
-

@@ -196,4 +196,5 @@ void free_request(request_t *req);
  */
 void free_response(response_t *resp);
 
+void handle_request(int request_fd, int reply_fd, const char *run_dir);
 #endif // PROTOCOL_H

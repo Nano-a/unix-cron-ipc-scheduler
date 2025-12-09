@@ -579,3 +579,40 @@ void free_response(response_t *resp) {
 
     free(resp);
 }
+
+void handle_request(int request_fd, int reply_fd, const char *run_dir) {
+    request_t *req = NULL;
+
+    int ret = receive_request(request_fd, &req);
+    if (ret <= 0 || !req) {
+        // PAS DE REQUETE : on ne fait rien
+        return;
+    }
+
+    // afficher que la commande a été reçue
+    printf("Commande reçue: opcode=%d\n", req->opcode);
+    fflush(stdout); // Important pour que l'affichage apparaisse immédiatement
+
+    response_t *resp = calloc(1, sizeof(response_t));
+    if (!resp) {
+        free_request(req);
+        return;
+    }
+
+    // Dispatcher
+    switch (req->opcode) {
+        case OPCODE_TERMINATE:
+            resp->anstype = ANSTYPE_OK;
+            send_response(reply_fd, resp);
+            free_response(resp);
+            free_request(req);
+            _exit(0);
+
+        default:
+            resp->anstype = ANSTYPE_OK;
+            send_response(reply_fd, resp);
+    }
+
+    free_response(resp);
+    free_request(req);
+}
