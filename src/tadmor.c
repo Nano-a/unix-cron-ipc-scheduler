@@ -118,7 +118,7 @@ int main(int argc, char *argv[]) {
     int flag_stderr = 0; // -e
     int flag_no_timing = 0; // -n
 
-    int timing_set_any = 0;
+    //int timing_set_any = 0;
     uint64_t minutes = 0;
     uint32_t hours = 0;
     uint8_t daysofweek = 0;
@@ -126,7 +126,7 @@ int main(int argc, char *argv[]) {
     //-c
     char *c_first = NULL; 
     char **c_extra = NULL; 
-    uint32_t c_extra_count = 0;
+    //uint32_t c_extra_count = 0;
 
     //-s
     char *s_first = NULL;
@@ -160,7 +160,7 @@ int main(int argc, char *argv[]) {
                         return 2;
                     }
                     hours = (uint32_t)h;
-                    timing_set_any = 1;
+                    ////timing_set_any = 1;
                 }
                 break;
             case 'd':
@@ -169,7 +169,7 @@ int main(int argc, char *argv[]) {
                         fprintf(stderr, "Invalid daysofweek: %s (expected comma-separated numbers 0..6)\n", optarg);
                         return 2;
                     }
-                    timing_set_any = 1;
+                    //////timing_set_any = 1;
                 }
                 break;
             case 'n':
@@ -230,7 +230,7 @@ int main(int argc, char *argv[]) {
                 return 2;
             }
             minutes = (uint64_t)mm;
-            timing_set_any = 1;
+            ////timing_set_any = 1;
         }
     }
 
@@ -244,7 +244,7 @@ int main(int argc, char *argv[]) {
         for (uint32_t i = 1; i < total; ++i) {
             c_extra[i] = strdup(argv[optind + (i - 1)]);
         }
-        c_extra_count = total;
+        ////c_extra_count = total;
     } else if (flag_combine && s_first) {
         int rem = argc - optind;
         uint32_t total = 1 + (rem > 0 ? (uint32_t)rem : 0);
