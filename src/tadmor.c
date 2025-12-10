@@ -1,5 +1,5 @@
-// tadmor.c - client argument parsing + consultative requests (T2.5 + T2.6)
-// Version modifiée pour T2.6 : implémentation des requêtes consultatives
+//tadmor.c - client argument parsing + consultative requests (T2.5 + T2.6)
+//Version modifiée pour T2.6 : implémentation des requêtes consultatives
 
 #define _POSIX_C_SOURCE 200809L
 
@@ -16,9 +16,9 @@
 
 #include "protocol.h"
 #include "serialization.h"
-#include "task_tree.h" // pour task_t
+#include "task_tree.h" //pour task_t
 
-// Helper
+//Helper
 static void compute_default_run_dir(char *out, size_t outlen) {
     const char *user = getenv("USER");
     if (!user) {
@@ -28,7 +28,7 @@ static void compute_default_run_dir(char *out, size_t outlen) {
     snprintf(out, outlen, "/tmp/%s/erraid", user);
 }
 
-// Parse unsigned int in range
+//Parse int non signé
 static int parse_uint_range(const char *s, unsigned long min, unsigned long max, unsigned long *out) {
     char *end;
     errno = 0;
@@ -39,7 +39,7 @@ static int parse_uint_range(const char *s, unsigned long min, unsigned long max,
     return 0;
 }
 
-// Parse daysofweek list "0,1,2" -> bitmask
+//Parse daysofweek
 static int parse_daysofweek(const char *s, uint8_t *out_mask) {
     if (!s || !*s) { *out_mask = 0; return 0; }
     uint8_t mask = 0;
@@ -58,7 +58,7 @@ static int parse_daysofweek(const char *s, uint8_t *out_mask) {
     return 0;
 }
 
-// Parse single taskid
+//Parse taskid
 static int parse_taskid(const char *s, uint64_t *out) {
     if (!s) return -1;
     char *end = NULL;
@@ -69,7 +69,7 @@ static int parse_taskid(const char *s, uint64_t *out) {
     return 0;
 }
 
-// Free request allocations that were dynamically created locally
+//Free request allocs
 static void free_request_allocs(request_t *req) {
     if (!req) return;
     if (req->opcode == OPCODE_CREATE) {
@@ -88,7 +88,7 @@ static void free_request_allocs(request_t *req) {
     }
 }
 
-// Format timing for printing
+//Format timing
 static void format_timing(const timing_t *t, char *out, size_t outlen) {
     if (!t) { snprintf(out, outlen, "(none)"); return; }
     if (t->minutes == 0 && t->hours == 0 && t->daysofweek == 0) {
@@ -109,7 +109,7 @@ static void format_timing(const timing_t *t, char *out, size_t outlen) {
     snprintf(out, outlen, "min=%" PRIu64 " hour=%u days=%s", t->minutes, t->hours, days);
 }
 
-// Join argv into a single command line for printing
+//argv en une seule commande
 static char *join_argv(uint32_t argc, char **argv) {
     if (argc == 0 || !argv) return strdup("");
     size_t total = 0;
@@ -124,7 +124,7 @@ static char *join_argv(uint32_t argc, char **argv) {
     return res;
 }
 
-// Helpers to print error codes
+//Helpers 
 static const char *errcode_to_str(uint16_t err) {
     switch (err) {
         case ERRCODE_NOT_FOUND: return "NOT_FOUND";
@@ -133,7 +133,7 @@ static const char *errcode_to_str(uint16_t err) {
     }
 }
 
-// Print list response in a readable format
+//Print list
 static void handle_list_response(const response_t *resp) {
     if (!resp) return;
     if (resp->anstype == ANSTYPE_ERROR) {
@@ -163,7 +163,7 @@ static void handle_list_response(const response_t *resp) {
     }
 }
 
-// Print times & exitcodes
+//Print times & exitcodes
 static void handle_times_exitcodes_response(const response_t *resp) {
     if (!resp) return;
     if (resp->anstype == ANSTYPE_ERROR) {
@@ -194,7 +194,7 @@ static void handle_times_exitcodes_response(const response_t *resp) {
     }
 }
 
-// Print stdout/stderr response
+//Print stdout/stderr response
 static void handle_output_response(const response_t *resp) {
     if (!resp) return;
     if (resp->anstype == ANSTYPE_ERROR) {
@@ -211,10 +211,10 @@ static void handle_output_response(const response_t *resp) {
         puts("(no output)");
         return;
     }
-    // Print raw bytes; ensure null termination for safe printing
+    
     char *buf = malloc(len + 1);
     if (!buf) {
-        // fallback: write directly to stdout
+        
         fwrite(out, 1, len, stdout);
         return;
     }
@@ -232,36 +232,36 @@ int main(int argc, char *argv[]) {
     compute_default_run_dir(run_dir, sizeof(run_dir));
 
     int flag_list = 0;
-    int flag_terminate = 0; // -q
-    int flag_create = 0;    // -c
-    int flag_combine = 0;   // -s
-    int flag_remove = 0;    // -r
-    int flag_times = 0;     // -x
-    int flag_stdout = 0;    // -o
-    int flag_stderr = 0;    // -e
+    int flag_terminate = 0; //-q
+    int flag_create = 0;    //-c
+    int flag_combine = 0;   //-s
+    int flag_remove = 0;    //-r
+    int flag_times = 0;     //-x
+    int flag_stdout = 0;    //-o
+    int flag_stderr = 0;    //-e
 
-    int flag_no_timing = 0; // -n
+    int flag_no_timing = 0; //-n
 
     uint64_t minutes = 0;
     uint32_t hours = 0;
     uint8_t daysofweek = 0;
 
-    // -c args
+    //-c args
     char *c_first = NULL;
     char **c_extra = NULL;
     uint32_t c_extra_count = 0;
 
-    // -s args
+    //-s args
     char *s_first = NULL;
     uint64_t *s_taskids = NULL;
     uint32_t s_nbtasks = 0;
 
-    uint64_t single_taskid = 0; // for -r/-x/-o/-e
+    uint64_t single_taskid = 0; //for -r/-x/-o/-e
     int have_single_taskid = 0;
 
-    const char *optstr = "lx:o:e:c:s:r:qm:H:d:n:p:m:"; // include -m here
+    const char *optstr = "lx:o:e:c:s:r:qm:H:d:n:p:m:"; //include -m here
 
-    // Track if any timing option was provided explicitly
+    //Track if any timing option was provided explicitly
     int timing_option_used = 0;
 
     while ((opt = getopt(argc, argv, optstr)) != -1) {
@@ -355,9 +355,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Remaining args after options are at argv[optind .. argc-1]
     if (flag_create && c_first) {
-        // Build argv list for the created command: first is c_first then the remaining args
+
         int rem = argc - optind;
         c_extra_count = 1 + (rem > 0 ? rem : 0);
         c_extra = calloc(c_extra_count, sizeof(char*));
@@ -385,7 +384,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Validate basic action combinations
+
     int n_actions = flag_list + flag_terminate + flag_create + flag_combine + flag_remove + flag_times + flag_stdout + flag_stderr;
     if (n_actions == 0) {
         fprintf(stderr, "No action specified. Use -l, -c, -s, -r, -x, -o, -e or -q.\n");
@@ -409,7 +408,7 @@ int main(int argc, char *argv[]) {
         return 2;
     }
 
-    // Timing validity rules
+    //Timing
     if (timing_option_used && !(flag_create || flag_combine)) {
         fprintf(stderr, "Timing options (-m, -H, -d) must be combined with -c or -s\n");
         return 2;
@@ -419,7 +418,7 @@ int main(int argc, char *argv[]) {
         return 2;
     }
 
-    // Build timing structure
+    //Build timing structure
     timing_t timing;
     memset(&timing, 0, sizeof(timing));
     if (flag_no_timing) {
@@ -432,7 +431,7 @@ int main(int argc, char *argv[]) {
         timing.daysofweek = daysofweek;
     }
 
-    // Build request
+    //Build request
     request_t *req = calloc(1, sizeof(request_t));
     if (!req) { perror("calloc"); return 1; }
 
@@ -477,7 +476,7 @@ int main(int argc, char *argv[]) {
         return 2;
     }
 
-    // Open pipes to server
+    //Open pipes
     int req_fd = -1, rep_fd = -1;
     if (open_pipes_client(run_dir, &req_fd, &rep_fd) != 0) {
         perror("open_pipes_client");
@@ -505,7 +504,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Handle consultative responses with formatting
+   
     switch (req->opcode) {
         case OPCODE_LIST:
             handle_list_response(resp);
@@ -518,7 +517,7 @@ int main(int argc, char *argv[]) {
             handle_output_response(resp);
             break;
         default:
-            // For non-consultative, fall back to generic OK/ERROR
+            
             if (resp->anstype == ANSTYPE_OK) {
                 puts("OK");
             } else if (resp->anstype == ANSTYPE_ERROR) {
@@ -529,7 +528,7 @@ int main(int argc, char *argv[]) {
             break;
     }
 
-    // Cleanup
+    //Cleanup
     if (resp) free_response(resp);
     free_request_allocs(req);
     free(req);
