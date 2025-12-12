@@ -21,6 +21,10 @@
 #include <pthread.h>
 
 static volatile sig_atomic_t g_stop = 0;
+static int g_debug_logs = 0; // 0 = désactivé, 1 = activé
+
+// Macro pour logs de debug
+#define DEBUG_LOG(...) do { if (g_debug_logs) fprintf(stderr, __VA_ARGS__); } while(0)
 
 // Forward declarations
 static int should_execute_task_simple(const task_t *task);
@@ -128,45 +132,96 @@ static int should_execute_task_simple(const task_t *task) {
         return 0;
     }
 
+    // DEBUG: Log chaque vérification
+    DEBUG_LOG("[DEBUG] should_execute_task_simple: taskid=%lu, time=%02d:%02d:%02d, tm_sec=%d\n",
+              (unsigned long)task->taskid, tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec, tm_now.tm_sec);
+
     // Exécution uniquement au début de la minute (comme cron)
     if (tm_now.tm_sec != 0) {
+        DEBUG_LOG("[DEBUG] Rejected: tm_sec != 0 (tm_sec=%d)\n", tm_now.tm_sec);
         return 0;
     }
 
     if (!(task->timing.minutes & (1ULL << tm_now.tm_min))) {
+        DEBUG_LOG("[DEBUG] Rejected: minutes bit not set (minute=%d)\n", tm_now.tm_min);
         return 0;
     }
     if (!(task->timing.hours & (1U << tm_now.tm_hour))) {
+        DEBUG_LOG("[DEBUG] Rejected: hours bit not set (hour=%d)\n", tm_now.tm_hour);
         return 0;
     }
     if (!(task->timing.daysofweek & (1U << tm_now.tm_wday))) {
+        DEBUG_LOG("[DEBUG] Rejected: daysofweek bit not set (wday=%d)\n", tm_now.tm_wday);
         return 0;
     }
     
+    DEBUG_LOG("[DEBUG] ✅ Task %lu SHOULD EXECUTE at %02d:%02d:%02d\n",
+              (unsigned long)task->taskid, tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
     return 1;
 }
 
 // Thread pour l'exécution périodique des tâches (exactement comme jalon 1)
 static void* task_execution_thread(void *arg) {
     const char *run_dir = (const char *)arg;
+    time_t start_time = time(NULL);
+    struct tm tm_start;
+    localtime_r(&start_time, &tm_start);
     
+    DEBUG_LOG("[DEBUG] 🚀 Task execution thread started at %02d:%02d:%02d\n",
+              tm_start.tm_hour, tm_start.tm_min, tm_start.tm_sec);
+    
+    int iteration = 0;
     // Exactement comme dans le jalon 1 : boucle simple avec sleep(1)
     while (!g_stop) {
+        iteration++;
+        time_t before_load = time(NULL);
+        struct tm tm_before;
+        localtime_r(&before_load, &tm_before);
+        
         task_t **tasks = NULL;
         size_t count = 0;
 
+        DEBUG_LOG("[DEBUG] 🔄 Iteration %d: Loading tasks at %02d:%02d:%02d\n",
+                  iteration, tm_before.tm_hour, tm_before.tm_min, tm_before.tm_sec);
+
         if (load_all_tasks(run_dir, &tasks, &count) == 0) {
+            time_t after_load = time(NULL);
+            struct tm tm_after;
+            localtime_r(&after_load, &tm_after);
+            
+            DEBUG_LOG("[DEBUG] ✅ Loaded %zu tasks in %ld seconds (loaded at %02d:%02d:%02d)\n",
+                      count, after_load - before_load, tm_after.tm_hour, tm_after.tm_min, tm_after.tm_sec);
+            
             for (size_t i = 0; i < count && !g_stop; ++i) {
                 if (should_execute_task_simple(tasks[i])) {
+                    time_t exec_time = time(NULL);
+                    struct tm tm_exec;
+                    localtime_r(&exec_time, &tm_exec);
+                    DEBUG_LOG("[DEBUG] 🎯 EXECUTING task %lu at %02d:%02d:%02d\n",
+                              (unsigned long)tasks[i]->taskid, tm_exec.tm_hour, tm_exec.tm_min, tm_exec.tm_sec);
                     execute_task(run_dir, tasks[i]);
+                    time_t after_exec = time(NULL);
+                    DEBUG_LOG("[DEBUG] ✅ Task %lu executed in %ld seconds\n",
+                              (unsigned long)tasks[i]->taskid, after_exec - exec_time);
                 }
             }
             free_task_array(tasks, count);
+        } else {
+            DEBUG_LOG("[DEBUG] ❌ Failed to load tasks\n");
         }
 
+        time_t before_sleep = time(NULL);
+        struct tm tm_sleep;
+        localtime_r(&before_sleep, &tm_sleep);
+        DEBUG_LOG("[DEBUG] 😴 Sleeping at %02d:%02d:%02d\n",
+                  tm_sleep.tm_hour, tm_sleep.tm_min, tm_sleep.tm_sec);
         sleep(1); // Exactement comme dans le jalon 1
+        time_t after_sleep = time(NULL);
+        DEBUG_LOG("[DEBUG] ⏰ Woke up at %02d:%02d:%02d (slept for %ld seconds)\n",
+                  tm_sleep.tm_hour, tm_sleep.tm_min, tm_sleep.tm_sec, after_sleep - before_sleep);
     }
     
+    DEBUG_LOG("[DEBUG] 🛑 Task execution thread stopping\n");
     return NULL;
 }
 
@@ -349,8 +404,9 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
 
 
 static void usage(const char *prog) {
-    fprintf(stderr, "Usage: %s [-r <run_dir>]\n", prog);
+    fprintf(stderr, "Usage: %s [-r <run_dir>] [-d]\n", prog);
     fprintf(stderr, "  -r <run_dir>  Répertoire d'exécution (défaut: /tmp/$USER/erraid)\n");
+    fprintf(stderr, "  -d            Activer les logs de debug\n");
     fprintf(stderr, "  -h, --help    Afficher cette aide\n");
 }
 
@@ -370,10 +426,13 @@ int main(int argc, char **argv) {
         }
     }
 
-    while ((opt = getopt(argc, argv, "r:h")) != -1) {
+    while ((opt = getopt(argc, argv, "r:hd")) != -1) {
         switch (opt) {
         case 'r':
             run_dir = optarg;
+            break;
+        case 'd':
+            g_debug_logs = 1;
             break;
         case 'h':
             usage(argv[0]);
