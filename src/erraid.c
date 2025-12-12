@@ -6,6 +6,7 @@
 #include "protocol.h"
 #include <sys/select.h>
 #include <sys/time.h>
+#include <sys/stat.h>
 #include <errno.h>
 
 #include <ctype.h>
@@ -167,7 +168,7 @@ int execute_task(const char *run_dir, const task_t *task) {
     return 0;
 }
 
-static void handle_request(int request_fd, int reply_fd) {
+static void handle_request(const char *run_dir, int request_fd, int reply_fd) {
     request_t *req = NULL;
     if (receive_request(request_fd, &req) < 0) {
         perror("receive_request");
@@ -181,9 +182,84 @@ static void handle_request(int request_fd, int reply_fd) {
         return;
     }
 
-    // Pour l'instant, retourner ERROR pour tous les opcodes non implémentés
-    resp->anstype = ANSTYPE_ERROR;
-    resp->u.error.errcode = 0x0001; // ERRCODE_GENERIC (valeur temporaire)
+    switch (req->opcode) {
+    case OPCODE_LIST: {
+        task_t **tasks = NULL;
+        size_t count = 0;
+        if (load_all_tasks(run_dir, &tasks, &count) < 0) {
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+        } else {
+            resp->anstype = ANSTYPE_OK;
+            resp->u.list_ok.nbtasks = (uint32_t)count;
+            resp->u.list_ok.tasks = tasks;
+        }
+        break;
+    }
+    case OPCODE_TIMES_EXITCODES: {
+        char path[MAX_PATH_LEN];
+        struct stat st;
+        if (build_task_dir_path(path, sizeof(path), run_dir, req->u.query.taskid) < 0 ||
+            stat(path, &st) < 0 || !S_ISDIR(st.st_mode)) {
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        int64_t *timestamps = NULL;
+        uint16_t *exitcodes = NULL;
+        uint32_t nbruns = 0;
+        if (read_execution_logs(run_dir, req->u.query.taskid, &timestamps, &exitcodes, &nbruns) < 0) {
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        if (nbruns == 0) {
+            free(timestamps);
+            free(exitcodes);
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_RUN;
+            break;
+        }
+        resp->anstype = ANSTYPE_OK;
+        resp->u.times_exitcodes_ok.nbruns = nbruns;
+        resp->u.times_exitcodes_ok.timestamps = timestamps;
+        resp->u.times_exitcodes_ok.exitcodes = exitcodes;
+        break;
+    }
+    case OPCODE_STDOUT:
+    case OPCODE_STDERR: {
+        char path[MAX_PATH_LEN];
+        struct stat st;
+        if (build_task_dir_path(path, sizeof(path), run_dir, req->u.query.taskid) < 0 ||
+            stat(path, &st) < 0 || !S_ISDIR(st.st_mode)) {
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        char *output = NULL;
+        size_t len = 0;
+        int rc = (req->opcode == OPCODE_STDOUT)
+                 ? read_stdout(run_dir, req->u.query.taskid, &output, &len)
+                 : read_stderr(run_dir, req->u.query.taskid, &output, &len);
+        if (rc < 0) {
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        resp->anstype = ANSTYPE_OK;
+        resp->u.output_ok.output = output;
+        resp->u.output_ok.len = len;
+        break;
+    }
+    case OPCODE_TERMINATE:
+        resp->anstype = ANSTYPE_OK;
+        g_stop = 1;
+        break;
+    default:
+        resp->anstype = ANSTYPE_ERROR;
+        resp->u.error.errcode = ERRCODE_NOT_FOUND;
+        break;
+    }
 
     if (send_response(reply_fd, resp) < 0) {
         perror("send_response");
@@ -231,7 +307,7 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
 
         // Une requête disponible
         if (FD_ISSET(request_fd, &readfds)) {
-            handle_request(request_fd, reply_fd);
+            handle_request(run_dir, request_fd, reply_fd);
         }
     }
 }

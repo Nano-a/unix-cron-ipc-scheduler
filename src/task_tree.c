@@ -478,3 +478,158 @@ int save_stdout(const char *run_dir, uint64_t taskid, const char *output, size_t
 int save_stderr(const char *run_dir, uint64_t taskid, const char *output, size_t len) {
     return save_stream_file(run_dir, taskid, "stderr", output ? output : "", output ? len : 0);
 }
+
+
+int read_execution_logs(const char *run_dir, uint64_t taskid,
+                        int64_t **timestamps_out, uint16_t **exitcodes_out,
+                        uint32_t *nbruns_out) {
+    if (!run_dir || !timestamps_out || !exitcodes_out || !nbruns_out) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    *timestamps_out = NULL;
+    *exitcodes_out = NULL;
+    *nbruns_out = 0;
+
+    char path[MAX_PATH_LEN];
+    if (build_task_path(path, sizeof(path), run_dir, taskid, "times-exitcodes") < 0) {
+        return -1;
+    }
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        if (errno == ENOENT) {
+            return 0; // Pas de runs enregistrés
+        }
+        return -1;
+    }
+
+    size_t cap = 8;
+    int64_t *timestamps = calloc(cap, sizeof(int64_t));
+    uint16_t *exitcodes = calloc(cap, sizeof(uint16_t));
+    if (!timestamps || !exitcodes) {
+        int saved = errno;
+        close(fd);
+        free(timestamps);
+        free(exitcodes);
+        errno = saved;
+        return -1;
+    }
+
+    uint32_t count = 0;
+    while (1) {
+        int64_t ts;
+        uint16_t ec;
+        if (read_int64(fd, &ts) < 0) {
+            if (errno == 0 || errno == EINVAL) break; // EOF probable
+            int saved = errno;
+            close(fd);
+            free(timestamps);
+            free(exitcodes);
+            errno = saved;
+            return -1;
+        }
+        if (read_uint16(fd, &ec) < 0) {
+            int saved = errno;
+            close(fd);
+            free(timestamps);
+            free(exitcodes);
+            errno = saved;
+            return -1;
+        }
+        if (count == cap) {
+            cap *= 2;
+            int64_t *tmp_ts = realloc(timestamps, cap * sizeof(int64_t));
+            uint16_t *tmp_ec = realloc(exitcodes, cap * sizeof(uint16_t));
+            if (!tmp_ts || !tmp_ec) {
+                int saved = errno;
+                close(fd);
+                free(tmp_ts ? tmp_ts : timestamps);
+                free(tmp_ec ? tmp_ec : exitcodes);
+                errno = saved;
+                return -1;
+            }
+            timestamps = tmp_ts;
+            exitcodes = tmp_ec;
+        }
+        timestamps[count] = ts;
+        exitcodes[count] = ec;
+        count++;
+    }
+    close(fd);
+
+    if (count == 0) {
+        free(timestamps);
+        free(exitcodes);
+        return 0;
+    }
+
+    *timestamps_out = timestamps;
+    *exitcodes_out = exitcodes;
+    *nbruns_out = count;
+    return 0;
+}
+
+static int read_stream_file(const char *run_dir, uint64_t taskid,
+                            const char *filename, char **output_out, size_t *len_out) {
+    if (!run_dir || !output_out || !len_out) {
+        errno = EINVAL;
+        return -1;
+    }
+    *output_out = NULL;
+    *len_out = 0;
+
+    char path[MAX_PATH_LEN];
+    if (build_task_path(path, sizeof(path), run_dir, taskid, filename) < 0) {
+        return -1;
+    }
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        if (errno == ENOENT) {
+            return 0; // Pas de sortie enregistrée
+        }
+        return -1;
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    if (st.st_size == 0) {
+        close(fd);
+        return 0;
+    }
+
+    char *buf = malloc((size_t)st.st_size + 1);
+    if (!buf) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    ssize_t rd = read(fd, buf, (size_t)st.st_size);
+    int saved = errno;
+    close(fd);
+    if (rd != st.st_size) {
+        free(buf);
+        errno = saved ? saved : EIO;
+        return -1;
+    }
+    buf[st.st_size] = '\0';
+    *output_out = buf;
+    *len_out = (size_t)st.st_size;
+    return 0;
+}
+
+int read_stdout(const char *run_dir, uint64_t taskid, char **output_out, size_t *len_out) {
+    return read_stream_file(run_dir, taskid, "stdout", output_out, len_out);
+}
+
+int read_stderr(const char *run_dir, uint64_t taskid, char **output_out, size_t *len_out) {
+    return read_stream_file(run_dir, taskid, "stderr", output_out, len_out);
+}

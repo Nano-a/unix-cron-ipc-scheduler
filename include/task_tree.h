@@ -26,4 +26,8 @@ int append_execution_log(const char *run_dir, uint64_t taskid, int64_t timestamp
 int save_stdout(const char *run_dir, uint64_t taskid, const char *output, size_t len);
 int save_stderr(const char *run_dir, uint64_t taskid, const char *output, size_t len);
 
+int read_execution_logs(const char *run_dir, uint64_t taskid, int64_t **timestamps_out, uint16_t **exitcodes_out, uint32_t *nbruns_out);
+int read_stdout(const char *run_dir, uint64_t taskid, char **output_out, size_t *len_out);
+int read_stderr(const char *run_dir, uint64_t taskid, char **output_out, size_t *len_out);
+
 #endif // TASK_TREE_H
