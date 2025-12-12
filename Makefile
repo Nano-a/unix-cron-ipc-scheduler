@@ -22,7 +22,7 @@ TADMOR_OBJS = $(TADMOR_SRCS:.c=.o)
 all: erraid tadmor
 
 erraid: $(ERRAID_OBJS)
-	$(CC) $(LDFLAGS) -o erraid $(ERRAID_OBJS)
+	$(CC) $(LDFLAGS) -pthread -o erraid $(ERRAID_OBJS)
 
 tadmor: $(TADMOR_OBJS)
 	$(CC) $(LDFLAGS) -o tadmor $(TADMOR_OBJS)

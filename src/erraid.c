@@ -18,8 +18,14 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 
 static volatile sig_atomic_t g_stop = 0;
+
+// Forward declarations
+static int should_execute_task_simple(const task_t *task);
+static void* task_execution_thread(void *arg);
+int execute_task(const char *run_dir, const task_t *task);
 
 static void handle_signal(int sig) {
     (void)sig;
@@ -111,7 +117,8 @@ typedef struct {
     int last_executed_minute; // -1 si jamais exécutée
 } task_execution_memory_t;
 
-static int should_execute_task(const task_t *task, int *last_executed_minute) {
+// Version simplifiée pour le thread (comme jalon 1)
+static int should_execute_task_simple(const task_t *task) {
     if (!task) {
         return 0;
     }
@@ -121,20 +128,8 @@ static int should_execute_task(const task_t *task, int *last_executed_minute) {
         return 0;
     }
 
-    // Calculer la minute actuelle (année, mois, jour, heure, minute)
-    // Utiliser un hash simple pour identifier la minute unique
-    int current_minute = tm_now.tm_year * 525600 + tm_now.tm_mon * 43200 + 
-                         tm_now.tm_mday * 1440 + tm_now.tm_hour * 60 + tm_now.tm_min;
-    
-    // Si la tâche a déjà été exécutée dans cette minute, ne pas l'exécuter à nouveau
-    if (last_executed_minute && *last_executed_minute == current_minute) {
-        return 0;
-    }
-
     // Exécution uniquement au début de la minute (comme cron)
-    // Permettre l'exécution à la seconde 0 ou 1 pour éviter de rater la seconde 0 exacte
-    // La mémorisation de la dernière minute évite les exécutions multiples
-    if (tm_now.tm_sec > 1) {
+    if (tm_now.tm_sec != 0) {
         return 0;
     }
 
@@ -148,12 +143,31 @@ static int should_execute_task(const task_t *task, int *last_executed_minute) {
         return 0;
     }
     
-    // Mémoriser que cette tâche va être exécutée dans cette minute
-    if (last_executed_minute) {
-        *last_executed_minute = current_minute;
+    return 1;
+}
+
+// Thread pour l'exécution périodique des tâches (exactement comme jalon 1)
+static void* task_execution_thread(void *arg) {
+    const char *run_dir = (const char *)arg;
+    
+    // Exactement comme dans le jalon 1 : boucle simple avec sleep(1)
+    while (!g_stop) {
+        task_t **tasks = NULL;
+        size_t count = 0;
+
+        if (load_all_tasks(run_dir, &tasks, &count) == 0) {
+            for (size_t i = 0; i < count && !g_stop; ++i) {
+                if (should_execute_task_simple(tasks[i])) {
+                    execute_task(run_dir, tasks[i]);
+                }
+            }
+            free_task_array(tasks, count);
+        }
+
+        sleep(1); // Exactement comme dans le jalon 1
     }
     
-    return 1;
+    return NULL;
 }
 
 int execute_task(const char *run_dir, const task_t *task) {
@@ -295,28 +309,25 @@ static void handle_request(const char *run_dir, int request_fd, int reply_fd) {
 
 void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
     int maxfd = request_fd;
+    pthread_t task_thread;
     
-    // Structure pour mémoriser la dernière minute d'exécution de chaque tâche
-    // Utiliser un tableau simple avec une taille maximale raisonnable
-    #define MAX_TRACKED_TASKS 1000
-    task_execution_memory_t execution_memory[MAX_TRACKED_TASKS];
-    size_t memory_count = 0;
-    
-    // Initialiser la mémoire
-    for (size_t i = 0; i < MAX_TRACKED_TASKS; i++) {
-        execution_memory[i].taskid = UINT64_MAX;
-        execution_memory[i].last_executed_minute = -1;
+    // Créer un thread séparé pour l'exécution des tâches (comme jalon 1)
+    // Cela garantit que les tâches sont vérifiées toutes les secondes avec sleep(1)
+    if (pthread_create(&task_thread, NULL, task_execution_thread, (void *)run_dir) != 0) {
+        perror("pthread_create");
+        return;
     }
-
+    
+    // Thread principal : gère uniquement les requêtes client avec select() (jalon 2)
     while (!g_stop) {
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(request_fd, &readfds);
 
-        // Vérifier les tâches fréquemment (toutes les 0.1 secondes) pour ne pas rater la seconde 0
+        // Timeout plus long maintenant qu'on a un thread séparé pour les tâches
         struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000; // 0.1 seconde
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
 
         int ret = select(maxfd + 1, &readfds, NULL, NULL, &tv);
 
@@ -326,43 +337,14 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
             break;
         }
 
-        if (ret == 0) {
-            // timeout : exécution périodique des tâches
-            task_t **tasks = NULL;
-            size_t count = 0;
-
-            if (load_all_tasks(run_dir, &tasks, &count) == 0) {
-                for (size_t i = 0; i < count && !g_stop; ++i) {
-                    // Trouver ou créer une entrée de mémoire pour cette tâche
-                    int *last_minute_ptr = NULL;
-                    for (size_t j = 0; j < memory_count && j < MAX_TRACKED_TASKS; j++) {
-                        if (execution_memory[j].taskid == tasks[i]->taskid) {
-                            last_minute_ptr = &execution_memory[j].last_executed_minute;
-                            break;
-                        }
-                    }
-                    // Si la tâche n'est pas encore dans la mémoire, l'ajouter
-                    if (last_minute_ptr == NULL && memory_count < MAX_TRACKED_TASKS) {
-                        execution_memory[memory_count].taskid = tasks[i]->taskid;
-                        execution_memory[memory_count].last_executed_minute = -1;
-                        last_minute_ptr = &execution_memory[memory_count].last_executed_minute;
-                        memory_count++;
-                    }
-                    
-                    if (should_execute_task(tasks[i], last_minute_ptr)) {
-                        execute_task(run_dir, tasks[i]);
-                    }
-                }
-                free_task_array(tasks, count);
-            }
-            continue;
-        }
-
-        // Une requête disponible
-        if (FD_ISSET(request_fd, &readfds)) {
+        // Une requête client disponible
+        if (ret > 0 && FD_ISSET(request_fd, &readfds)) {
             handle_request(run_dir, request_fd, reply_fd);
         }
     }
+    
+    // Attendre que le thread se termine
+    pthread_join(task_thread, NULL);
 }
 
 
