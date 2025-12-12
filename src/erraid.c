@@ -21,10 +21,19 @@
 #include <pthread.h>
 
 static volatile sig_atomic_t g_stop = 0;
-static int g_debug_logs = 0; // 0 = désactivé, 1 = activé
+static int g_debug_logs = 0; // 0 = désactivé, 1 = activé (avec -d)
 
-// Macro pour logs de debug
-#define DEBUG_LOG(...) do { if (g_debug_logs) fprintf(stderr, __VA_ARGS__); } while(0)
+// Macro pour logs de debug (écrit aussi dans un fichier pour les tests)
+#define DEBUG_LOG(...) do { \
+    if (g_debug_logs) { \
+        fprintf(stderr, __VA_ARGS__); \
+        FILE *logfile = fopen("/tmp/erraid_debug.log", "a"); \
+        if (logfile) { \
+            fprintf(logfile, __VA_ARGS__); \
+            fclose(logfile); \
+        } \
+    } \
+} while(0)
 
 // Forward declarations
 static int should_execute_task_simple(const task_t *task);
@@ -160,7 +169,7 @@ static int should_execute_task_simple(const task_t *task) {
     return 1;
 }
 
-// Thread pour l'exécution périodique des tâches (exactement comme jalon 1)
+// Thread pour l'exécution périodique des tâches (avec préchargement pour éviter délais)
 static void* task_execution_thread(void *arg) {
     const char *run_dir = (const char *)arg;
     time_t start_time = time(NULL);
@@ -170,55 +179,83 @@ static void* task_execution_thread(void *arg) {
     DEBUG_LOG("[DEBUG] 🚀 Task execution thread started at %02d:%02d:%02d\n",
               tm_start.tm_hour, tm_start.tm_min, tm_start.tm_sec);
     
+    // Précharger les tâches une fois au démarrage
+    task_t **cached_tasks = NULL;
+    size_t cached_count = 0;
+    if (load_all_tasks(run_dir, &cached_tasks, &cached_count) == 0) {
+        DEBUG_LOG("[DEBUG] ✅ Preloaded %zu tasks\n", cached_count);
+    }
+    
+    // Synchroniser sur la prochaine seconde 0
+    int secs_to_wait = 60 - tm_start.tm_sec;
+    if (secs_to_wait > 0 && secs_to_wait < 60) {
+        DEBUG_LOG("[DEBUG] ⏳ Waiting %d seconds to sync on next minute (second 0)\n", secs_to_wait);
+        sleep(secs_to_wait);
+    }
+    
     int iteration = 0;
-    // Exactement comme dans le jalon 1 : boucle simple avec sleep(1)
     while (!g_stop) {
         iteration++;
-        time_t before_load = time(NULL);
-        struct tm tm_before;
-        localtime_r(&before_load, &tm_before);
+        time_t now = time(NULL);
+        struct tm tm_now;
+        localtime_r(&now, &tm_now);
         
-        task_t **tasks = NULL;
-        size_t count = 0;
-
-        DEBUG_LOG("[DEBUG] 🔄 Iteration %d: Loading tasks at %02d:%02d:%02d\n",
-                  iteration, tm_before.tm_hour, tm_before.tm_min, tm_before.tm_sec);
-
-        if (load_all_tasks(run_dir, &tasks, &count) == 0) {
-            time_t after_load = time(NULL);
-            struct tm tm_after;
-            localtime_r(&after_load, &tm_after);
-            
-            DEBUG_LOG("[DEBUG] ✅ Loaded %zu tasks in %ld seconds (loaded at %02d:%02d:%02d)\n",
-                      count, after_load - before_load, tm_after.tm_hour, tm_after.tm_min, tm_after.tm_sec);
-            
-            for (size_t i = 0; i < count && !g_stop; ++i) {
-                if (should_execute_task_simple(tasks[i])) {
+        // Recharger les tâches toutes les 10 itérations pour détecter les nouvelles tâches
+        if (iteration % 10 == 0) {
+            if (cached_tasks) {
+                free_task_array(cached_tasks, cached_count);
+                cached_tasks = NULL;
+                cached_count = 0;
+            }
+            if (load_all_tasks(run_dir, &cached_tasks, &cached_count) == 0) {
+                DEBUG_LOG("[DEBUG] 🔄 Reloaded %zu tasks\n", cached_count);
+            }
+        }
+        
+        DEBUG_LOG("[DEBUG] 🔄 Iteration %d: Checking at %02d:%02d:%02d (tm_sec=%d) with %zu cached tasks\n",
+                  iteration, tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec, tm_now.tm_sec, cached_count);
+        
+        // Vérifier et exécuter les tâches (utiliser les tâches en cache)
+        if (cached_tasks) {
+            for (size_t i = 0; i < cached_count && !g_stop; ++i) {
+                if (should_execute_task_simple(cached_tasks[i])) {
                     time_t exec_time = time(NULL);
                     struct tm tm_exec;
                     localtime_r(&exec_time, &tm_exec);
                     DEBUG_LOG("[DEBUG] 🎯 EXECUTING task %lu at %02d:%02d:%02d\n",
-                              (unsigned long)tasks[i]->taskid, tm_exec.tm_hour, tm_exec.tm_min, tm_exec.tm_sec);
-                    execute_task(run_dir, tasks[i]);
+                              (unsigned long)cached_tasks[i]->taskid, tm_exec.tm_hour, tm_exec.tm_min, tm_exec.tm_sec);
+                    execute_task(run_dir, cached_tasks[i]);
                     time_t after_exec = time(NULL);
                     DEBUG_LOG("[DEBUG] ✅ Task %lu executed in %ld seconds\n",
-                              (unsigned long)tasks[i]->taskid, after_exec - exec_time);
+                              (unsigned long)cached_tasks[i]->taskid, after_exec - exec_time);
                 }
             }
-            free_task_array(tasks, count);
-        } else {
-            DEBUG_LOG("[DEBUG] ❌ Failed to load tasks\n");
         }
 
-        time_t before_sleep = time(NULL);
-        struct tm tm_sleep;
-        localtime_r(&before_sleep, &tm_sleep);
-        DEBUG_LOG("[DEBUG] 😴 Sleeping at %02d:%02d:%02d\n",
-                  tm_sleep.tm_hour, tm_sleep.tm_min, tm_sleep.tm_sec);
-        sleep(1); // Exactement comme dans le jalon 1
+        // Calculer le temps jusqu'à la prochaine seconde 0
+        now = time(NULL);
+        localtime_r(&now, &tm_now);
+        int secs_to_next_minute = 60 - tm_now.tm_sec;
+        
+        DEBUG_LOG("[DEBUG] 😴 Sleeping %d seconds until next minute (current: %02d:%02d:%02d)\n",
+                  secs_to_next_minute, tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
+        
+        if (secs_to_next_minute > 0 && secs_to_next_minute <= 60) {
+            sleep(secs_to_next_minute);
+        } else {
+            sleep(1); // Fallback
+        }
+        
         time_t after_sleep = time(NULL);
-        DEBUG_LOG("[DEBUG] ⏰ Woke up at %02d:%02d:%02d (slept for %ld seconds)\n",
-                  tm_sleep.tm_hour, tm_sleep.tm_min, tm_sleep.tm_sec, after_sleep - before_sleep);
+        struct tm tm_after;
+        localtime_r(&after_sleep, &tm_after);
+        DEBUG_LOG("[DEBUG] ⏰ Woke up at %02d:%02d:%02d\n",
+                  tm_after.tm_hour, tm_after.tm_min, tm_after.tm_sec);
+    }
+    
+    // Nettoyer
+    if (cached_tasks) {
+        free_task_array(cached_tasks, cached_count);
     }
     
     DEBUG_LOG("[DEBUG] 🛑 Task execution thread stopping\n");
@@ -368,10 +405,12 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
     
     // Créer un thread séparé pour l'exécution des tâches (comme jalon 1)
     // Cela garantit que les tâches sont vérifiées toutes les secondes avec sleep(1)
+    DEBUG_LOG("[DEBUG] Creating task execution thread...\n");
     if (pthread_create(&task_thread, NULL, task_execution_thread, (void *)run_dir) != 0) {
         perror("pthread_create");
         return;
     }
+    DEBUG_LOG("[DEBUG] Task execution thread created successfully\n");
     
     // Thread principal : gère uniquement les requêtes client avec select() (jalon 2)
     while (!g_stop) {
