@@ -65,6 +65,7 @@ typedef struct {
 // ============================================================================
 typedef struct {
     uint16_t anstype;  // Type de réponse (ANSTYPE_OK ou ANSTYPE_ERROR)
+    uint16_t opcode_used;  // Opcode utilisé pour créer cette réponse (0 si inconnu)
     union {
         // Réponse OK pour CREATE ou COMBINE
         struct {
@@ -141,7 +142,7 @@ int send_response(int fd, const response_t *resp);
  * 
  * @note La réponse doit être libérée avec free_response() après utilisation.
  */
-int receive_response(int fd, response_t **resp);
+int receive_response(int fd, response_t **resp, uint16_t opcode);
 
 // ============================================================================
 // Fonctions de libération mémoire

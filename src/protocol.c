@@ -14,7 +14,7 @@
  * Construit le chemin du FIFO de requêtes.
  */
 static int build_request_fifo_path(const char *run_dir, char *path, size_t path_size) {
-    int len = snprintf(path, path_size, "%s/request", run_dir);
+    int len = snprintf(path, path_size, "%s/erraid-request-pipe", run_dir);
     if (len < 0 || len >= (int)path_size) {
         errno = ENAMETOOLONG;
         return -1;
@@ -26,7 +26,7 @@ static int build_request_fifo_path(const char *run_dir, char *path, size_t path_
  * Construit le chemin du FIFO de réponses.
  */
 static int build_reply_fifo_path(const char *run_dir, char *path, size_t path_size) {
-    int len = snprintf(path, path_size, "%s/reply", run_dir);
+    int len = snprintf(path, path_size, "%s/erraid-reply-pipe", run_dir);
     if (len < 0 || len >= (int)path_size) {
         errno = ENAMETOOLONG;
         return -1;
@@ -398,11 +398,122 @@ int send_response(int fd, const response_t *resp) {
  * - Si on peut lire un uint64, c'est CREATE/COMBINE OK ou REMOVE/TERMINATE OK
  * - Si on peut lire un uint32, on teste si c'est LIST, TIMES_EXITCODES, ou OUTPUT
  */
-int receive_response(int fd, response_t **resp_out) {
+
+/**
+ * Lit une commande dans le format utilisé dans les réponses LIST.
+ * Ce format est différent de read_command : il n'y a pas de champ 'kind'.
+ * Format: TYPE (uint16) puis:
+ *   - Si TYPE='SI': ARGC (uint32) puis ARGV
+ *   - Sinon (SQ, etc.): NBCMDS (uint32) puis CMDS récursifs
+ */
+static int read_command_list_format(int fd, command_t **cmd_out) {
+    if (!cmd_out) { errno = EINVAL; return -1; }
+    *cmd_out = NULL;
+    
+    command_t *cmd = calloc(1, sizeof(command_t));
+    if (!cmd) return -1;
+    
+    // Initialiser tous les champs à zéro (déjà fait par calloc, mais être explicite)
+    cmd->type = 0;
+    cmd->argc = 0;
+    cmd->argv = NULL;
+    cmd->nb_cmds = 0;
+    cmd->cmds = NULL;
+    
+    if (read_uint16(fd, &cmd->type) < 0) {
+        free(cmd);
+        return -1;
+    }
+    
+    // Vérifier si c'est une commande simple
+    if (cmd->type == type_from_str("SI")) {
+        uint32_t argc = 0;
+        char **argv = NULL;
+        if (read_arguments(fd, &argc, &argv) < 0) {
+            free(cmd);
+            return -1;
+        }
+        cmd->argc = argc;
+        cmd->argv = argv;
+        cmd->nb_cmds = 0;
+        cmd->cmds = NULL;
+        *cmd_out = cmd;
+        return 0;
+    }
+    
+    // Sinon, c'est une combinaison (séquence, etc.)
+    uint32_t nb_cmds = 0;
+    if (read_uint32(fd, &nb_cmds) < 0) {
+        free(cmd);
+        return -1;
+    }
+    if (nb_cmds == 0 || nb_cmds > 10000) {
+        free(cmd);
+        errno = EPROTO;
+        return -1;
+    }
+    
+    command_t **children = calloc(nb_cmds, sizeof(command_t *));
+    if (!children) {
+        free(cmd);
+        return -1;
+    }
+    
+    // Initialiser tous les pointeurs à NULL
+    for (uint32_t i = 0; i < nb_cmds; ++i) {
+        children[i] = NULL;
+    }
+    
+    for (uint32_t i = 0; i < nb_cmds; ++i) {
+        children[i] = NULL;  // S'assurer que c'est NULL avant la lecture
+        if (read_command_list_format(fd, &children[i]) < 0) {
+            // Libérer les enfants partiellement alloués
+            for (uint32_t j = 0; j < i; ++j) {
+                if (children && children[j]) {
+                    free_command(children[j]);
+                    children[j] = NULL;
+                }
+            }
+            if (children) {
+                free(children);
+                children = NULL;
+            }
+            if (cmd) {
+                free(cmd);
+                cmd = NULL;
+            }
+            return -1;
+        }
+        // Vérifier que la commande a bien été allouée
+        if (!children[i]) {
+            // Libérer ce qui a été alloué
+            for (uint32_t j = 0; j < i; ++j) {
+                if (children[j]) {
+                    free_command(children[j]);
+                    children[j] = NULL;
+                }
+            }
+            free(children);
+            free(cmd);
+            errno = ENOMEM;
+            return -1;
+        }
+    }
+    
+    cmd->argc = 0;
+    cmd->argv = NULL;
+    cmd->nb_cmds = nb_cmds;
+    cmd->cmds = children;
+    *cmd_out = cmd;
+    return 0;
+}
+
+int receive_response(int fd, response_t **resp_out, uint16_t opcode) {
     if (!resp_out) { errno = EINVAL; return -1; }
 
     response_t *resp = calloc(1, sizeof(response_t));
     if (!resp) return -1;
+    resp->opcode_used = opcode;  // Mémoriser l'opcode
 
     if (read_uint16(fd, &resp->anstype) < 0) { free(resp); return -1; }
 
@@ -412,126 +523,123 @@ int receive_response(int fd, response_t **resp_out) {
         return 0;
     }
 
-    // ANSTYPE_OK : on doit déterminer le type de réponse
-    // On utilise une heuristique basée sur ce qu'on peut lire
-    
-    // Stratégie : on essaie de lire un uint32 d'abord
-    // Si ça marche, c'est soit LIST (nbtasks), TIMES_EXITCODES (nbruns), ou OUTPUT (len)
-    // Si ça échoue, on essaie uint64 (CREATE/COMBINE/REMOVE/TERMINATE)
-    
-    // Sauvegarder la position pour pouvoir revenir en arrière si nécessaire
-    // Note: on ne peut pas vraiment "rewind" un FIFO, donc on doit deviner intelligemment
-    
-    // On lit un uint32 et on teste différentes interprétations
+    // ANSTYPE_OK : utiliser l'opcode pour déterminer le type de réponse
     uint32_t v32;
     if (read_uint32(fd, &v32) == 0) {
-        // On a lu un uint32, ça peut être :
-        // 1. LIST: nbtasks suivi de nbtasks tâches
-        // 2. TIMES_EXITCODES: nbruns suivi de nbruns (timestamp + exitcode)
-        // 3. OUTPUT: len suivi de len octets
-        
-        // Heuristique: si nbtasks/nbruns/len est raisonnable, on essaie de lire
-        // On teste LIST d'abord (le plus probable pour le Jalon 2)
-        
-        uint32_t nbtasks = v32;
-        if (nbtasks > 0 && nbtasks < 1000000) {
-            // Essayer LIST: lire nbtasks tâches
-            task_t **tasks = calloc(nbtasks, sizeof(task_t *));
-            if (tasks) {
+        if (opcode == OPCODE_LIST) {
+            // Réponse LIST
+            uint32_t nbtasks = v32;
+            if (nbtasks == 0) {
+                resp->u.list_ok.nbtasks = 0;
+                resp->u.list_ok.tasks = NULL;
+                *resp_out = resp;
+                return 0;
+            }
+            if (nbtasks > 0 && nbtasks < 10000) {
+                task_t **tasks = calloc(nbtasks, sizeof(task_t *));
+                if (!tasks) {
+                    errno = ENOMEM;
+                    goto fail;
+                }
                 int ok = 1;
-                for (uint32_t i = 0; i < nbtasks && ok; ++i) {
+                uint32_t i = 0;
+                for (i = 0; i < nbtasks && ok; ++i) {
                     task_t *t = calloc(1, sizeof(task_t));
                     if (!t) { ok = 0; break; }
                     if (read_uint64(fd, &t->taskid) < 0) { free(t); ok = 0; break; }
                     if (read_timing(fd, &t->timing) < 0) { free(t); ok = 0; break; }
-                    if (read_command(fd, &t->cmd) < 0) { free(t); ok = 0; break; }
+                    if (read_command_list_format(fd, &t->cmd) < 0) { free(t); ok = 0; break; }
                     tasks[i] = t;
                 }
-                if (ok) {
+                if (ok && i == nbtasks) {
                     resp->u.list_ok.nbtasks = nbtasks;
                     resp->u.list_ok.tasks = tasks;
                     *resp_out = resp;
                     return 0;
                 }
-                // Échec, libérer ce qu'on a alloué
-                for (uint32_t j = 0; j < nbtasks; ++j) {
+                for (uint32_t j = 0; j < i; ++j) {
                     if (tasks[j]) {
                         if (tasks[j]->cmd) free_command(tasks[j]->cmd);
                         free(tasks[j]);
                     }
                 }
                 free(tasks);
+                errno = EPROTO;
+                goto fail;
             }
-        }
-        
-        // Essayer TIMES_EXITCODES
-        uint32_t nbruns = v32;
-        if (nbruns > 0 && nbruns <= 1000000) {
-            int64_t *timestamps = calloc(nbruns, sizeof(int64_t));
-            uint16_t *exitcodes = calloc(nbruns, sizeof(uint16_t));
-            if (timestamps && exitcodes) {
-                int ok = 1;
-                for (uint32_t i = 0; i < nbruns && ok; ++i) {
-                    if (read_int64(fd, &timestamps[i]) < 0) ok = 0;
-                    else if (read_uint16(fd, &exitcodes[i]) < 0) ok = 0;
-                }
-                if (ok) {
-                    resp->u.times_exitcodes_ok.nbruns = nbruns;
-                    resp->u.times_exitcodes_ok.timestamps = timestamps;
-                    resp->u.times_exitcodes_ok.exitcodes = exitcodes;
-                    *resp_out = resp;
-                    return 0;
-                }
-                free(timestamps);
-                free(exitcodes);
-            } else {
-                free(timestamps);
-                free(exitcodes);
-            }
-        }
-        
-        // Essayer OUTPUT (STDOUT/STDERR)
-        uint32_t len = v32;
-        if (len <= (1024 * 1024 * 100)) { // limite 100MB
-            char *buf = malloc((size_t)len + 1);
-            if (buf) {
-                if (len > 0) {
-                    if (local_robust_read(fd, buf, len) == (ssize_t)len) {
-                        buf[len] = '\0';
-                        resp->u.output_ok.output = buf;
-                        resp->u.output_ok.len = (size_t)len;
+            errno = EPROTO;
+            goto fail;
+        } else if (opcode == OPCODE_TIMES_EXITCODES) {
+            // Réponse TIMES_EXITCODES
+            uint32_t nbruns = v32;
+            if (nbruns > 0 && nbruns <= 1000000) {
+                int64_t *timestamps = calloc(nbruns, sizeof(int64_t));
+                uint16_t *exitcodes = calloc(nbruns, sizeof(uint16_t));
+                if (timestamps && exitcodes) {
+                    int ok = 1;
+                    for (uint32_t i = 0; i < nbruns && ok; ++i) {
+                        if (read_int64(fd, &timestamps[i]) < 0) ok = 0;
+                        else if (read_uint16(fd, &exitcodes[i]) < 0) ok = 0;
+                    }
+                    if (ok) {
+                        resp->u.times_exitcodes_ok.nbruns = nbruns;
+                        resp->u.times_exitcodes_ok.timestamps = timestamps;
+                        resp->u.times_exitcodes_ok.exitcodes = exitcodes;
                         *resp_out = resp;
                         return 0;
                     }
+                    free(timestamps);
+                    free(exitcodes);
                 } else {
-                    // len == 0, sortie vide
-                    buf[0] = '\0';
-                    resp->u.output_ok.output = buf;
-                    resp->u.output_ok.len = 0;
-                    *resp_out = resp;
-                    return 0;
+                    free(timestamps);
+                    free(exitcodes);
                 }
-                free(buf);
             }
+            errno = EPROTO;
+            goto fail;
+        } else if (opcode == OPCODE_STDOUT || opcode == OPCODE_STDERR) {
+            // Réponse OUTPUT
+            uint32_t len = v32;
+            if (len <= (1024 * 1024 * 100)) {
+                char *buf = malloc((size_t)len + 1);
+                if (buf) {
+                    if (len > 0) {
+                        if (local_robust_read(fd, buf, len) == (ssize_t)len) {
+                            buf[len] = '\0';
+                            resp->u.output_ok.output = buf;
+                            resp->u.output_ok.len = (size_t)len;
+                            *resp_out = resp;
+                            return 0;
+                        }
+                    } else {
+                        buf[0] = '\0';
+                        resp->u.output_ok.output = buf;
+                        resp->u.output_ok.len = 0;
+                        *resp_out = resp;
+                        return 0;
+                    }
+                    free(buf);
+                }
+            }
+            errno = EPROTO;
+            goto fail;
+        } else {
+            // Opcode non reconnu ou 0
+            errno = EPROTO;
+            goto fail;
         }
-        
-        // Aucune interprétation n'a fonctionné
-        errno = EPROTO;
-        goto fail;
-    }
-    
-    // On n'a pas pu lire un uint32, essayer uint64 (CREATE/COMBINE/REMOVE/TERMINATE)
-    uint64_t taskid;
-    if (read_uint64(fd, &taskid) == 0) {
-        resp->u.create_ok.taskid = taskid;
+    } else {
+        // On n'a pas pu lire un uint32, essayer uint64 (CREATE/COMBINE)
+        uint64_t taskid;
+        if (read_uint64(fd, &taskid) == 0) {
+            resp->u.create_ok.taskid = taskid;
+            *resp_out = resp;
+            return 0;
+        }
+        // REMOVE/TERMINATE OK : pas de données supplémentaires
         *resp_out = resp;
         return 0;
     }
-    
-    // REMOVE/TERMINATE OK : pas de données supplémentaires
-    // (on a déjà lu anstype = OK, et il n'y a rien d'autre à lire)
-    *resp_out = resp;
-    return 0;
 
 fail:
     free(resp);
@@ -561,20 +669,34 @@ void free_response(response_t *resp) {
     if (!resp) return;
 
     if (resp->anstype == ANSTYPE_ERROR) {
-        
+        // Pas de mémoire à libérer pour les erreurs
     } else if (resp->anstype == ANSTYPE_OK) {
-        if (resp->u.list_ok.tasks) {
+        // Utiliser opcode_used pour savoir quel type de réponse libérer
+        if (resp->opcode_used == OPCODE_LIST) {
             for (uint32_t i = 0; i < resp->u.list_ok.nbtasks; ++i) {
                 task_t *t = resp->u.list_ok.tasks[i];
                 if (!t) continue;
-                if (t->cmd) free_command(t->cmd);
+                if (t->cmd) {
+                    free_command(t->cmd);
+                    t->cmd = NULL;
+                }
                 free(t);
+                t = NULL;
             }
             free(resp->u.list_ok.tasks);
+            resp->u.list_ok.tasks = NULL;
+        } else if (resp->opcode_used == OPCODE_TIMES_EXITCODES) {
+            free(resp->u.times_exitcodes_ok.timestamps);
+            resp->u.times_exitcodes_ok.timestamps = NULL;
+            if (resp->u.times_exitcodes_ok.exitcodes != NULL) {
+                free(resp->u.times_exitcodes_ok.exitcodes);
+                resp->u.times_exitcodes_ok.exitcodes = NULL;
+            }
+        } else if (resp->opcode_used == OPCODE_STDOUT || resp->opcode_used == OPCODE_STDERR) {
+            free(resp->u.output_ok.output);
+            resp->u.output_ok.output = NULL;
         }
-        if (resp->u.times_exitcodes_ok.timestamps) free(resp->u.times_exitcodes_ok.timestamps);
-        if (resp->u.times_exitcodes_ok.exitcodes) free(resp->u.times_exitcodes_ok.exitcodes);
-        if (resp->u.output_ok.output) free(resp->u.output_ok.output);
+        // CREATE/COMBINE/REMOVE/TERMINATE : pas de mémoire à libérer (juste taskid ou rien)
     }
 
     free(resp);

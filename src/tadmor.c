@@ -25,7 +25,7 @@ static void compute_default_run_dir(char *out, size_t outlen) {
         struct passwd *pw = getpwuid(getuid());
         user = pw ? pw->pw_name : "unknown";
     }
-    snprintf(out, outlen, "/tmp/%s/erraid", user);
+    snprintf(out, outlen, "/tmp/%s/erraid/pipes", user);
 }
 
 //Parse int non signé
@@ -157,7 +157,11 @@ static void free_request_allocs(request_t *req) {
 }
 
 //Format command line (support simple et sequence)
+static char *format_command_line_internal(const command_t *cmd, int top_level);
 static char *format_command_line(const command_t *cmd) {
+    return format_command_line_internal(cmd, 1);
+}
+static char *format_command_line_internal(const command_t *cmd, int top_level) {
     if (!cmd) return NULL;
     
     if (cmd->type == type_from_str("SI")) {
@@ -189,9 +193,9 @@ static char *format_command_line(const command_t *cmd) {
         char **sub_cmds = malloc(cmd->nb_cmds * sizeof(char*));
         if (!sub_cmds) return NULL;
         
-        size_t total_len = 2;  // "(" et ")"
+        size_t total_len = (top_level ? 0 : 4);  // "( " et " )" avec espaces si pas top_level
         for (uint32_t i = 0; i < cmd->nb_cmds; i++) {
-            sub_cmds[i] = format_command_line(cmd->cmds[i]);
+            sub_cmds[i] = format_command_line_internal(cmd->cmds[i], 0);
             if (!sub_cmds[i]) {
                 for (uint32_t j = 0; j < i; j++) free(sub_cmds[j]);
                 free(sub_cmds);
@@ -208,18 +212,25 @@ static char *format_command_line(const command_t *cmd) {
         }
         
         size_t pos = 0;
-        result[pos++] = '(';
+        if (!top_level) {
+            result[pos++] = '(';
+            result[pos++] = ' ';  // Espace après (
+        }
         for (uint32_t i = 0; i < cmd->nb_cmds; i++) {
             size_t len = strlen(sub_cmds[i]);
             memcpy(result + pos, sub_cmds[i], len);
             pos += len;
             free(sub_cmds[i]);
             if (i < cmd->nb_cmds - 1) {
+                result[pos++] = ' ';
                 result[pos++] = ';';
                 result[pos++] = ' ';
             }
         }
-        result[pos++] = ')';
+        if (!top_level) {
+            result[pos++] = ' ';  // Espace avant )
+            result[pos++] = ')';
+        }
         result[pos] = '\0';
         free(sub_cmds);
         return result;
@@ -238,7 +249,8 @@ static void format_timing_display(const timing_t *t, char *out, size_t outlen) {
     out[0] = '\0';
     
     // Minutes
-    if (t->minutes == 0xFFFFFFFFFFFFFFFFULL) {
+    // Vérifier si tous les bits de 0 à 59 sont set
+    if (t->minutes == 0xFFFFFFFFFFFFFFFFULL || t->minutes == ((1ULL << 60) - 1)) {
         strcat(out, "*");
     } else if (t->minutes == 0) {
         strcat(out, "-");
@@ -247,9 +259,19 @@ static void format_timing_display(const timing_t *t, char *out, size_t outlen) {
         for (int i = 0; i < 60; i++) {
             if (t->minutes & (1ULL << i)) {
                 if (!first) strcat(out, ",");
-                char num[10];
-                snprintf(num, sizeof(num), "%d", i);
+                int range_start = i;
+                int range_end = i;
+                while (range_end + 1 < 60 && (t->minutes & (1ULL << (range_end + 1)))) {
+                    range_end++;
+                }
+                char num[32];
+                if (range_start == range_end) {
+                    snprintf(num, sizeof(num), "%d", range_start);
+                } else {
+                    snprintf(num, sizeof(num), "%d-%d", range_start, range_end);
+                }
                 strcat(out, num);
+                i = range_end;
                 first = 0;
             }
         }
@@ -257,7 +279,8 @@ static void format_timing_display(const timing_t *t, char *out, size_t outlen) {
     strcat(out, " ");
     
     // Heures
-    if (t->hours == 0xFFFFFFFF) {
+    // Vérifier si tous les bits de 0 à 23 sont set
+    if (t->hours == 0xFFFFFFFF || t->hours == ((1U << 24) - 1)) {
         strcat(out, "*");
     } else if (t->hours == 0) {
         strcat(out, "-");
@@ -266,9 +289,19 @@ static void format_timing_display(const timing_t *t, char *out, size_t outlen) {
         for (int i = 0; i < 24; i++) {
             if (t->hours & (1U << i)) {
                 if (!first) strcat(out, ",");
-                char num[10];
-                snprintf(num, sizeof(num), "%d", i);
+                int range_start = i;
+                int range_end = i;
+                while (range_end + 1 < 24 && (t->hours & (1U << (range_end + 1)))) {
+                    range_end++;
+                }
+                char num[32];
+                if (range_start == range_end) {
+                    snprintf(num, sizeof(num), "%d", range_start);
+                } else {
+                    snprintf(num, sizeof(num), "%d-%d", range_start, range_end);
+                }
                 strcat(out, num);
+                i = range_end;
                 first = 0;
             }
         }
@@ -285,9 +318,19 @@ static void format_timing_display(const timing_t *t, char *out, size_t outlen) {
         for (int i = 0; i < 7; i++) {
             if (t->daysofweek & (1U << i)) {
                 if (!first) strcat(out, ",");
-                char num[10];
-                snprintf(num, sizeof(num), "%d", i);
+                int range_start = i;
+                int range_end = i;
+                while (range_end + 1 < 7 && (t->daysofweek & (1U << (range_end + 1)))) {
+                    range_end++;
+                }
+                char num[32];
+                if (range_start == range_end) {
+                    snprintf(num, sizeof(num), "%d", range_start);
+                } else {
+                    snprintf(num, sizeof(num), "%d-%d", range_start, range_end);
+                }
                 strcat(out, num);
+                i = range_end;
                 first = 0;
             }
         }
@@ -317,7 +360,6 @@ static void handle_list_response(const response_t *resp) {
     uint32_t n = resp->u.list_ok.nbtasks;
     task_t **tasks = resp->u.list_ok.tasks;
     if (n == 0) {
-        puts("No tasks registered.");
         return;
     }
     for (uint32_t i = 0; i < n; ++i) {
@@ -418,7 +460,7 @@ int main(int argc, char *argv[]) {
     uint64_t single_taskid = 0; //for -r/-x/-o/-e
     int have_single_taskid = 0;
 
-    const char *optstr = "lx:o:e:c:s:r:qm:H:d:n:"; // Pas de -p, run_dir déduit de $USER
+    const char *optstr = "lx:o:e:c:s:r:qm:H:d:n:p:";
 
     //Track if any timing option was provided explicitly
     int timing_option_used = 0;
@@ -456,6 +498,15 @@ int main(int argc, char *argv[]) {
                 break;
             case 'n':
                 flag_no_timing = 1;
+                break;
+        case 'p':
+                if (optarg && optarg[0] != '\0') {
+                    strncpy(run_dir, optarg, sizeof(run_dir) - 1);
+                    run_dir[sizeof(run_dir) - 1] = '\0';
+                } else {
+                    fprintf(stderr, "Error: -p requires a directory argument\n");
+                    return 2;
+                }
                 break;
             case 'c':
                 flag_create = 1;
@@ -640,7 +691,7 @@ int main(int argc, char *argv[]) {
     }
 
     response_t *resp = NULL;
-    if (receive_response(rep_fd, &resp) != 0) {
+    if (receive_response(rep_fd, &resp, req->opcode) != 0) {
         perror("receive_response");
         free_request_allocs(req);
         free(req);
@@ -649,6 +700,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    int ret_code = 0;
     switch (req->opcode) {
         case OPCODE_LIST:
             handle_list_response(resp);
@@ -670,6 +722,9 @@ int main(int argc, char *argv[]) {
             }
             break;
     }
+    if (resp && resp->anstype == ANSTYPE_ERROR) {
+        ret_code = 1;
+    }
 
     //Cleanup
     if (resp) free_response(resp);
@@ -684,5 +739,5 @@ int main(int argc, char *argv[]) {
     }
     if (s_taskids) free(s_taskids);
 
-    return 0;
+    return ret_code;
 }

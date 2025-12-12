@@ -105,7 +105,13 @@ static int load_all_tasks(const char *run_dir, task_t ***tasks_out, size_t *coun
     return 0;
 }
 
-int should_execute_task(const task_t *task) {
+// Structure pour mémoriser la dernière minute d'exécution de chaque tâche
+typedef struct {
+    uint64_t taskid;
+    int last_executed_minute; // -1 si jamais exécutée
+} task_execution_memory_t;
+
+static int should_execute_task(const task_t *task, int *last_executed_minute) {
     if (!task) {
         return 0;
     }
@@ -115,8 +121,20 @@ int should_execute_task(const task_t *task) {
         return 0;
     }
 
+    // Calculer la minute actuelle (année, mois, jour, heure, minute)
+    // Utiliser un hash simple pour identifier la minute unique
+    int current_minute = tm_now.tm_year * 525600 + tm_now.tm_mon * 43200 + 
+                         tm_now.tm_mday * 1440 + tm_now.tm_hour * 60 + tm_now.tm_min;
+    
+    // Si la tâche a déjà été exécutée dans cette minute, ne pas l'exécuter à nouveau
+    if (last_executed_minute && *last_executed_minute == current_minute) {
+        return 0;
+    }
+
     // Exécution uniquement au début de la minute (comme cron)
-    if (tm_now.tm_sec != 0) {
+    // Permettre l'exécution à la seconde 0 ou 1 pour éviter de rater la seconde 0 exacte
+    // La mémorisation de la dernière minute évite les exécutions multiples
+    if (tm_now.tm_sec > 1) {
         return 0;
     }
 
@@ -129,6 +147,12 @@ int should_execute_task(const task_t *task) {
     if (!(task->timing.daysofweek & (1U << tm_now.tm_wday))) {
         return 0;
     }
+    
+    // Mémoriser que cette tâche va être exécutée dans cette minute
+    if (last_executed_minute) {
+        *last_executed_minute = current_minute;
+    }
+    
     return 1;
 }
 
@@ -271,15 +295,28 @@ static void handle_request(const char *run_dir, int request_fd, int reply_fd) {
 
 void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
     int maxfd = request_fd;
+    
+    // Structure pour mémoriser la dernière minute d'exécution de chaque tâche
+    // Utiliser un tableau simple avec une taille maximale raisonnable
+    #define MAX_TRACKED_TASKS 1000
+    task_execution_memory_t execution_memory[MAX_TRACKED_TASKS];
+    size_t memory_count = 0;
+    
+    // Initialiser la mémoire
+    for (size_t i = 0; i < MAX_TRACKED_TASKS; i++) {
+        execution_memory[i].taskid = UINT64_MAX;
+        execution_memory[i].last_executed_minute = -1;
+    }
 
     while (!g_stop) {
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(request_fd, &readfds);
 
+        // Vérifier les tâches fréquemment (toutes les 0.1 secondes) pour ne pas rater la seconde 0
         struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000; // 0.1 seconde
 
         int ret = select(maxfd + 1, &readfds, NULL, NULL, &tv);
 
@@ -296,7 +333,23 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
 
             if (load_all_tasks(run_dir, &tasks, &count) == 0) {
                 for (size_t i = 0; i < count && !g_stop; ++i) {
-                    if (should_execute_task(tasks[i])) {
+                    // Trouver ou créer une entrée de mémoire pour cette tâche
+                    int *last_minute_ptr = NULL;
+                    for (size_t j = 0; j < memory_count && j < MAX_TRACKED_TASKS; j++) {
+                        if (execution_memory[j].taskid == tasks[i]->taskid) {
+                            last_minute_ptr = &execution_memory[j].last_executed_minute;
+                            break;
+                        }
+                    }
+                    // Si la tâche n'est pas encore dans la mémoire, l'ajouter
+                    if (last_minute_ptr == NULL && memory_count < MAX_TRACKED_TASKS) {
+                        execution_memory[memory_count].taskid = tasks[i]->taskid;
+                        execution_memory[memory_count].last_executed_minute = -1;
+                        last_minute_ptr = &execution_memory[memory_count].last_executed_minute;
+                        memory_count++;
+                    }
+                    
+                    if (should_execute_task(tasks[i], last_minute_ptr)) {
                         execute_task(run_dir, tasks[i]);
                     }
                 }
@@ -322,6 +375,7 @@ static void usage(const char *prog) {
 int main(int argc, char **argv) {
     const char *run_dir = NULL;
     char default_run_dir[512];
+    char pipes_dir[512];
     int opt;
     int request_fd = -1;
     int reply_fd = -1;
@@ -363,17 +417,27 @@ int main(int argc, char **argv) {
         run_dir = default_run_dir;
     }
 
+    if (snprintf(pipes_dir, sizeof(pipes_dir), "%s/pipes", run_dir) < 0 || strlen(pipes_dir) >= sizeof(pipes_dir)) {
+        fprintf(stderr, "Erreur: chemin pipes trop long\n");
+        return EXIT_FAILURE;
+    }
+
     if (init_task_directory(run_dir) < 0) {
         perror("init_task_directory");
         return EXIT_FAILURE;
     }
 
-    if (init_pipes(run_dir) < 0) {
+    if (mkdir(pipes_dir, 0777) < 0 && errno != EEXIST) {
+        perror("mkdir pipes_dir");
+        return EXIT_FAILURE;
+    }
+
+    if (init_pipes(pipes_dir) < 0) {
         perror("init_pipes");
         return EXIT_FAILURE;
     }
 
-    if (open_pipes_daemon(run_dir, &request_fd, &reply_fd) < 0) {
+    if (open_pipes_daemon(pipes_dir, &request_fd, &reply_fd) < 0) {
         perror("open_pipes_daemon");
         return EXIT_FAILURE;
     }
