@@ -117,12 +117,17 @@ int open_pipes_daemon(const char *run_dir, int *request_fd_out, int *reply_fd_ou
     }
     
     // Le démon ouvre request en lecture (O_RDONLY) et reply en écriture (O_WRONLY)
-    int request_fd = open(request_path, O_RDONLY);
+    // IMPORTANT: Pour les pipes nommés, open() en O_RDONLY BLOQUE jusqu'à ce qu'un client
+    // ouvre l'autre extrémité en O_WRONLY. Pour éviter que le démon bloque au démarrage,
+    // on utilise O_RDWR (lecture+écriture) qui permet d'ouvrir le pipe sans bloquer.
+    // Ensuite, on utilise seulement la partie lecture pour request et écriture pour reply.
+    // Note: O_RDWR n'est pas idéal mais c'est la seule façon d'éviter le blocage au démarrage.
+    int request_fd = open(request_path, O_RDWR);
     if (request_fd < 0) {
         return -1;
     }
     
-    int reply_fd = open(reply_path, O_WRONLY);
+    int reply_fd = open(reply_path, O_RDWR);
     if (reply_fd < 0) {
         close(request_fd);
         return -1;
@@ -158,14 +163,24 @@ int open_pipes_client(const char *run_dir, int *request_fd_out, int *reply_fd_ou
         return -1;
     }
     
-    // Le client ouvre request en écriture (O_WRONLY) et reply en lecture (O_RDONLY)
-    int request_fd = open(request_path, O_WRONLY);
+    // Utiliser O_RDWR pour éviter le blocage et assurer la compatibilité avec le démon
+    int request_fd = open(request_path, O_RDWR);
     if (request_fd < 0) {
+        // Debug: vérifier si le fichier existe
+        struct stat st;
+        if (stat(request_path, &st) < 0) {
+            errno = ENOENT; // Le fichier n'existe pas
+        }
         return -1;
     }
     
-    int reply_fd = open(reply_path, O_RDONLY);
+    int reply_fd = open(reply_path, O_RDWR);
     if (reply_fd < 0) {
+        // Debug: vérifier si le fichier existe
+        struct stat st;
+        if (stat(reply_path, &st) < 0) {
+            errno = ENOENT; // Le fichier n'existe pas
+        }
         close(request_fd);
         return -1;
     }
@@ -216,6 +231,10 @@ static int read_taskid(int fd, uint64_t *id) {
     return read_uint64(fd, id);
 }
 
+// Forward declaration
+static int write_command_list_format(int fd, const command_t *cmd);
+static int read_command_list_format(int fd, command_t **cmd_out);
+
 //send/receive request
 int send_request(int fd, const request_t *req) {
     if (!req) { errno = EINVAL; return -1; }
@@ -223,24 +242,6 @@ int send_request(int fd, const request_t *req) {
     if (write_uint16(fd, req->opcode) < 0) return -1;
 
     switch (req->opcode) {
-    case OPCODE_CREATE:
-        if (write_timing(fd, &req->u.create.timing) < 0) return -1;
-        if (write_uint32(fd, req->u.create.argc) < 0) return -1;
-        for (uint32_t i = 0; i < req->u.create.argc; ++i) {
-            if (write_string(fd, req->u.create.argv[i]) < 0) return -1;
-        }
-        return 0;
-
-    case OPCODE_COMBINE:
-        if (write_timing(fd, &req->u.combine.timing) < 0) return -1;
-        if (write_uint16(fd, req->u.combine.type) < 0) return -1;
-        if (write_uint32(fd, req->u.combine.nbtasks) < 0) return -1;
-        for (uint32_t i = 0; i < req->u.combine.nbtasks; ++i) {
-            if (write_taskid(fd, req->u.combine.taskids[i]) < 0) return -1;
-        }
-        return 0;
-
-    case OPCODE_REMOVE:
     case OPCODE_TIMES_EXITCODES:
     case OPCODE_STDOUT:
     case OPCODE_STDERR:
@@ -265,43 +266,6 @@ int receive_request(int fd, request_t **req_out) {
     if (read_uint16(fd, &req->opcode) < 0) { free(req); return -1; }
 
     switch (req->opcode) {
-    case OPCODE_CREATE: {
-        if (read_timing(fd, &req->u.create.timing) < 0) goto fail;
-        if (read_uint32(fd, &req->u.create.argc) < 0) goto fail;
-        if (req->u.create.argc > 0) {
-            req->u.create.argv = calloc(req->u.create.argc, sizeof(char *));
-            if (!req->u.create.argv) goto fail;
-            for (uint32_t i = 0; i < req->u.create.argc; ++i) {
-                if (read_string(fd, &req->u.create.argv[i]) < 0) {
-                    // Libérer ce qu'on a déjà alloué
-                    for (uint32_t j = 0; j < i; ++j) free(req->u.create.argv[j]);
-                    free(req->u.create.argv);
-                    goto fail;
-                }
-            }
-        } else {
-            req->u.create.argv = NULL;
-        }
-        *req_out = req;
-        return 0;
-    }
-    case OPCODE_COMBINE: {
-        if (read_timing(fd, &req->u.combine.timing) < 0) goto fail;
-        if (read_uint16(fd, &req->u.combine.type) < 0) goto fail;
-        if (read_uint32(fd, &req->u.combine.nbtasks) < 0) goto fail;
-        uint32_t n = req->u.combine.nbtasks;
-        req->u.combine.taskids = calloc(n, sizeof(uint64_t));
-        if (!req->u.combine.taskids) goto fail;
-        for (uint32_t i = 0; i < n; ++i) {
-            if (read_taskid(fd, &req->u.combine.taskids[i]) < 0) {
-                free(req->u.combine.taskids);
-                goto fail;
-            }
-        }
-        *req_out = req;
-        return 0;
-    }
-    case OPCODE_REMOVE:
     case OPCODE_TIMES_EXITCODES:
     case OPCODE_STDOUT:
     case OPCODE_STDERR:
@@ -334,6 +298,42 @@ int send_response(int fd, const response_t *resp) {
         return write_uint16(fd, resp->u.error.errcode);
     }
 
+    // ANSTYPE_OK : utiliser opcode_used si disponible pour déterminer le type de réponse
+    if (resp->opcode_used == OPCODE_LIST) {
+        // LIST : envoyer le nombre de tâches puis chaque tâche
+        if (write_uint32(fd, resp->u.list_ok.nbtasks) < 0) return -1;
+        for (uint32_t i = 0; i < resp->u.list_ok.nbtasks; ++i) {
+            task_t *t = resp->u.list_ok.tasks[i];
+            if (!t) { errno = EPROTO; return -1; }
+            if (write_uint64(fd, t->taskid) < 0) return -1;
+            if (write_timing(fd, &t->timing) < 0) return -1;
+            // Utiliser write_command_list_format au lieu de write_command
+            if (write_command_list_format(fd, t->cmd) < 0) return -1;
+        }
+        return 0;
+    } else if (resp->opcode_used == OPCODE_TIMES_EXITCODES) {
+        // TIMES_EXITCODES : envoyer le nombre d'exécutions puis chaque timestamp/exitcode
+        if (write_uint32(fd, resp->u.times_exitcodes_ok.nbruns) < 0) return -1;
+        for (uint32_t i = 0; i < resp->u.times_exitcodes_ok.nbruns; ++i) {
+            if (write_int64(fd, resp->u.times_exitcodes_ok.timestamps[i]) < 0) return -1;
+            if (write_uint16(fd, resp->u.times_exitcodes_ok.exitcodes[i]) < 0) return -1;
+        }
+        return 0;
+    } else if (resp->opcode_used == OPCODE_STDOUT || resp->opcode_used == OPCODE_STDERR) {
+        // STDOUT/STDERR : envoyer la longueur puis le contenu
+        if (resp->u.output_ok.len > UINT32_MAX) { errno = EOVERFLOW; return -1; }
+        if (write_uint32(fd, (uint32_t)resp->u.output_ok.len) < 0) return -1;
+        if (resp->u.output_ok.len > 0) {
+            if (local_robust_write(fd, resp->u.output_ok.output, resp->u.output_ok.len) != (ssize_t)resp->u.output_ok.len)
+                return -1;
+        }
+        return 0;
+    } else if (resp->opcode_used == OPCODE_TERMINATE) {
+        // TERMINATE : pas de données supplémentaires
+        return 0;
+    }
+    
+    // Fallback : si opcode_used n'est pas défini, utiliser l'ancienne logique
     // ANSTYPE_OK : déterminer le type de réponse en testant les champs dans l'ordre de priorité
     // On teste les pointeurs NULL pour déterminer quel champ de l'union est utilisé
     
@@ -371,18 +371,11 @@ int send_response(int fd, const response_t *resp) {
         return 0;
     }
     
-    // 4. CREATE/COMBINE : tester si taskid est non-zéro (mais 0 est valide, donc on vérifie différemment)
-    // Pour CREATE/COMBINE, on envoie toujours le taskid si les autres champs sont NULL
-    // Note: cette logique suppose que l'appelant remplit correctement les champs
-    if (resp->u.create_ok.taskid != 0 || 
-        (resp->u.list_ok.tasks == NULL && 
-         resp->u.times_exitcodes_ok.timestamps == NULL && 
-         resp->u.output_ok.output == NULL)) {
-        // C'est soit CREATE/COMBINE OK, soit REMOVE/TERMINATE OK (taskid = 0)
-        return write_uint64(fd, resp->u.create_ok.taskid);
+    // TERMINATE : pas de données supplémentaires
+    if (resp->opcode_used == OPCODE_TERMINATE) {
+        return 0;
     }
-
-    // 5. REMOVE/TERMINATE OK : pas de données supplémentaires (déjà géré ci-dessus avec taskid = 0)
+    
     return 0;
 }
 
@@ -394,10 +387,41 @@ int send_response(int fd, const response_t *resp) {
  * en lisant et en testant, mais une meilleure approche serait de passer l'opcode
  * en paramètre.
  * 
- * Pour l'instant, on utilise une heuristique :
- * - Si on peut lire un uint64, c'est CREATE/COMBINE OK ou REMOVE/TERMINATE OK
- * - Si on peut lire un uint32, on teste si c'est LIST, TIMES_EXITCODES, ou OUTPUT
+ * Pour les jalons 1 et 2, on utilise l'opcode passé en paramètre pour déterminer
+ * le type de réponse attendu (LIST, TIMES_EXITCODES, STDOUT, STDERR, TERMINATE).
  */
+
+/**
+ * Écrit une commande dans le format utilisé dans les réponses LIST.
+ * Ce format est différent de write_command : il n'y a pas de champ 'kind'.
+ * Format: TYPE (uint16) puis:
+ *   - Si TYPE='SI': ARGC (uint32) puis ARGV
+ *   - Sinon (SQ, etc.): NBCMDS (uint32) puis CMDS récursifs
+ */
+static int write_command_list_format(int fd, const command_t *cmd) {
+    if (!cmd) { errno = EINVAL; return -1; }
+    
+    if (write_uint16(fd, cmd->type) < 0) return -1;
+    
+    // Commande simple
+    if (cmd->argc > 0 && cmd->argv != NULL) {
+        if (write_arguments(fd, cmd->argc, cmd->argv) < 0) return -1;
+        return 0;
+    }
+    
+    // Commande séquence
+    if (cmd->nb_cmds > 0 && cmd->cmds != NULL) {
+        if (write_uint32(fd, cmd->nb_cmds) < 0) return -1;
+        for (uint32_t i = 0; i < cmd->nb_cmds; ++i) {
+            if (!cmd->cmds[i]) { errno = EINVAL; return -1; }
+            if (write_command_list_format(fd, cmd->cmds[i]) < 0) return -1;
+        }
+        return 0;
+    }
+    
+    errno = EINVAL;
+    return -1;
+}
 
 /**
  * Lit une commande dans le format utilisé dans les réponses LIST.
@@ -524,6 +548,13 @@ int receive_response(int fd, response_t **resp_out, uint16_t opcode) {
     }
 
     // ANSTYPE_OK : utiliser l'opcode pour déterminer le type de réponse
+    if (opcode == OPCODE_TERMINATE) {
+        // TERMINATE : pas de données supplémentaires
+        resp->opcode_used = opcode;
+        *resp_out = resp;
+        return 0;
+    }
+    
     uint32_t v32;
     if (read_uint32(fd, &v32) == 0) {
         if (opcode == OPCODE_LIST) {
@@ -572,7 +603,14 @@ int receive_response(int fd, response_t **resp_out, uint16_t opcode) {
         } else if (opcode == OPCODE_TIMES_EXITCODES) {
             // Réponse TIMES_EXITCODES
             uint32_t nbruns = v32;
-            if (nbruns > 0 && nbruns <= 1000000) {
+            if (nbruns == 0) {
+                // Liste vide : tâche jamais exécutée
+                resp->u.times_exitcodes_ok.nbruns = 0;
+                resp->u.times_exitcodes_ok.timestamps = NULL;
+                resp->u.times_exitcodes_ok.exitcodes = NULL;
+                *resp_out = resp;
+                return 0;
+            } else if (nbruns > 0 && nbruns <= 1000000) {
                 int64_t *timestamps = calloc(nbruns, sizeof(int64_t));
                 uint16_t *exitcodes = calloc(nbruns, sizeof(uint16_t));
                 if (timestamps && exitcodes) {
@@ -629,16 +667,9 @@ int receive_response(int fd, response_t **resp_out, uint16_t opcode) {
             goto fail;
         }
     } else {
-        // On n'a pas pu lire un uint32, essayer uint64 (CREATE/COMBINE)
-        uint64_t taskid;
-        if (read_uint64(fd, &taskid) == 0) {
-            resp->u.create_ok.taskid = taskid;
-            *resp_out = resp;
-            return 0;
-        }
-        // REMOVE/TERMINATE OK : pas de données supplémentaires
-        *resp_out = resp;
-        return 0;
+        // On n'a pas pu lire un uint32
+        errno = EPROTO;
+        goto fail;
     }
 
 fail:
@@ -648,20 +679,9 @@ fail:
 
 //free
 void free_request(request_t *req) {
-    if (!req) return;
-    switch (req->opcode) {
-    case OPCODE_CREATE:
-        if (req->u.create.argv) {
-            for (uint32_t i = 0; i < req->u.create.argc; ++i) free(req->u.create.argv[i]);
-            free(req->u.create.argv);
-        }
-        break;
-    case OPCODE_COMBINE:
-        free(req->u.combine.taskids);
-        break;
-    default:
-        break;
-    }
+    // Pour les jalons 1 et 2, aucune allocation à libérer
+    // (les requêtes consultatives n'allouent pas de mémoire)
+    (void)req;
     free(req);
 }
 
@@ -696,7 +716,7 @@ void free_response(response_t *resp) {
             free(resp->u.output_ok.output);
             resp->u.output_ok.output = NULL;
         }
-        // CREATE/COMBINE/REMOVE/TERMINATE : pas de mémoire à libérer (juste taskid ou rien)
+        // TERMINATE : pas de mémoire à libérer
     }
 
     free(resp);
