@@ -78,7 +78,15 @@ int read_uint8(int fd, uint8_t *value) {
 int read_uint16(int fd, uint16_t *value) {
     uint16_t tmp;
     ssize_t rd = read(fd, &tmp, sizeof(uint16_t));
-    if (rd != sizeof(uint16_t)) return -1;
+    if (rd == 0) {
+        // Fin de fichier (client déconnecté)
+        errno = EBADMSG;
+        return -1;
+    }
+    if (rd != sizeof(uint16_t)) {
+        // Erreur de lecture
+        return -1;
+    }
     *value = be16toh(tmp);
     return 0;
 }
@@ -105,7 +113,15 @@ int read_uint64(int fd, uint64_t *value) {
 int read_int64(int fd, int64_t *value) {
     int64_t tmp;
     ssize_t rd = read(fd, &tmp, sizeof(int64_t));
-    if (rd != sizeof(int64_t)) return -1;
+    if (rd == 0) {
+        // Fin de fichier (EOF)
+        errno = EBADMSG;
+        return -1;
+    }
+    if (rd != sizeof(int64_t)) {
+        // Erreur de lecture
+        return -1;
+    }
     *value = (int64_t)be64toh((uint64_t)tmp);
     return 0;
 }

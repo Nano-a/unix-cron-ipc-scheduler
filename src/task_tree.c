@@ -522,7 +522,13 @@ int read_execution_logs(const char *run_dir, uint64_t taskid,
         int64_t ts;
         uint16_t ec;
         if (read_int64(fd, &ts) < 0) {
-            if (errno == 0 || errno == EINVAL) break; // EOF probable
+            // Si errno == 0, c'est probablement EOF (read() a retourné 0)
+            // Si errno == EINVAL, c'est aussi probablement EOF
+            // Dans ces cas, on arrête la boucle normalement
+            if (errno == 0 || errno == EINVAL || errno == EBADMSG) {
+                break; // EOF probable
+            }
+            // Autre erreur : on retourne -1
             int saved = errno;
             close(fd);
             free(timestamps);
@@ -531,6 +537,10 @@ int read_execution_logs(const char *run_dir, uint64_t taskid,
             return -1;
         }
         if (read_uint16(fd, &ec) < 0) {
+            // Même logique : si errno == 0, EINVAL ou EBADMSG, c'est EOF
+            if (errno == 0 || errno == EINVAL || errno == EBADMSG) {
+                break; // EOF probable
+            }
             int saved = errno;
             close(fd);
             free(timestamps);
@@ -587,9 +597,9 @@ static int read_stream_file(const char *run_dir, uint64_t taskid,
 
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
-        if (errno == ENOENT) {
-            return 0; // Pas de sortie enregistrée
-        }
+        // Si le fichier n'existe pas (ENOENT), retourner -1 avec errno=ENOENT
+        // pour que le démon puisse distinguer "fichier inexistant" de "autre erreur"
+        // Le démon utilisera errno pour déterminer si c'est NOT_RUN ou NOT_FOUND
         return -1;
     }
 
