@@ -12,13 +12,15 @@
 #include <inttypes.h>
 #include <pwd.h>
 #include <sys/types.h>
+#include <sys/select.h>
+#include <sys/time.h>
 #include <time.h>
 
 #include "protocol.h"
 #include "serialization.h"
 #include "task_tree.h"
 
-//Helper
+// Calcule le répertoire par défaut pour les pipes
 static void compute_default_run_dir(char *out, size_t outlen) {
     const char *user = getenv("USER");
     if (!user) {
@@ -28,105 +30,7 @@ static void compute_default_run_dir(char *out, size_t outlen) {
     snprintf(out, outlen, "/tmp/%s/erraid/pipes", user);
 }
 
-//Parse int non signé
-static int parse_uint_range(const char *s, unsigned long min, unsigned long max, unsigned long *out) {
-    char *end;
-    errno = 0;
-    unsigned long v = strtoul(s, &end, 10);
-    if (errno != 0 || *end != '\0') return -1;
-    if (v < min || v > max) return -1;
-    *out = v;
-    return 0;
-}
-
-//Parse minutes avec support des listes et "*"
-static int parse_minutes(const char *s, uint64_t *out) {
-    if (!s || !*s) {
-        *out = 0;
-        return 0;
-    }
-    if (strcmp(s, "*") == 0) {
-        *out = 0xFFFFFFFFFFFFFFFFULL;
-        return 0;
-    }
-    uint64_t mask = 0;
-    char *tmp = strdup(s);
-    if (!tmp) return -1;
-    char *saveptr = NULL;
-    char *tok = strtok_r(tmp, ",", &saveptr);
-    while (tok) {
-        unsigned long m;
-        if (parse_uint_range(tok, 0, 59, &m) != 0) {
-            free(tmp);
-            return -1;
-        }
-        mask |= (1ULL << m);
-        tok = strtok_r(NULL, ",", &saveptr);
-    }
-    free(tmp);
-    *out = mask;
-    return 0;
-}
-
-//Parse hours avec support des listes et "*"
-static int parse_hours(const char *s, uint32_t *out) {
-    if (!s || !*s) {
-        *out = 0;
-        return 0;
-    }
-    if (strcmp(s, "*") == 0) {
-        *out = 0xFFFFFFFF;
-        return 0;
-    }
-    uint32_t mask = 0;
-    char *tmp = strdup(s);
-    if (!tmp) return -1;
-    char *saveptr = NULL;
-    char *tok = strtok_r(tmp, ",", &saveptr);
-    while (tok) {
-        unsigned long h;
-        if (parse_uint_range(tok, 0, 23, &h) != 0) {
-            free(tmp);
-            return -1;
-        }
-        mask |= (1U << h);
-        tok = strtok_r(NULL, ",", &saveptr);
-    }
-    free(tmp);
-    *out = mask;
-    return 0;
-}
-
-//Parse daysofweek avec support de "*"
-static int parse_daysofweek(const char *s, uint8_t *out_mask) {
-    if (!s || !*s) {
-        *out_mask = 0;
-        return 0;
-    }
-    if (strcmp(s, "*") == 0) {
-        *out_mask = 0x7F;
-        return 0;
-    }
-    uint8_t mask = 0;
-    char *tmp = strdup(s);
-    if (!tmp) return -1;
-    char *saveptr = NULL;
-    char *tok = strtok_r(tmp, ",", &saveptr);
-    while (tok) {
-        unsigned long d;
-        if (parse_uint_range(tok, 0, 6, &d) != 0) {
-            free(tmp);
-            return -1;
-        }
-        mask |= (1U << d);
-        tok = strtok_r(NULL, ",", &saveptr);
-    }
-    free(tmp);
-    *out_mask = mask;
-    return 0;
-}
-
-//Parse taskid
+// Parse taskid depuis une chaîne de caractères
 static int parse_taskid(const char *s, uint64_t *out) {
     if (!s) return -1;
     char *end = NULL;
@@ -135,25 +39,6 @@ static int parse_taskid(const char *s, uint64_t *out) {
     if (errno != 0 || *end != '\0') return -1;
     *out = (uint64_t)v;
     return 0;
-}
-
-//Free request allocs
-static void free_request_allocs(request_t *req) {
-    if (!req) return;
-    if (req->opcode == OPCODE_CREATE) {
-        if (req->u.create.argv) {
-            for (uint32_t i = 0; i < req->u.create.argc; ++i) {
-                free(req->u.create.argv[i]);
-            }
-            free(req->u.create.argv);
-            req->u.create.argv = NULL;
-        }
-    } else if (req->opcode == OPCODE_COMBINE) {
-        if (req->u.combine.taskids) {
-            free(req->u.combine.taskids);
-            req->u.combine.taskids = NULL;
-        }
-    }
 }
 
 //Format command line (support simple et sequence)
@@ -346,7 +231,7 @@ static const char *errcode_to_str(uint16_t err) {
     }
 }
 
-//Print list
+// Affiche la réponse LIST
 static void handle_list_response(const response_t *resp) {
     if (!resp) return;
     if (resp->anstype == ANSTYPE_ERROR) {
@@ -374,7 +259,7 @@ static void handle_list_response(const response_t *resp) {
     }
 }
 
-//Print times & exitcodes
+// Affiche la réponse TIMES_EXITCODES
 static void handle_times_exitcodes_response(const response_t *resp) {
     if (!resp) return;
     if (resp->anstype == ANSTYPE_ERROR) {
@@ -407,7 +292,7 @@ static void handle_times_exitcodes_response(const response_t *resp) {
     }
 }
 
-//Print stdout/stderr response
+// Affiche la réponse STDOUT ou STDERR
 static void handle_output_response(const response_t *resp) {
     if (!resp) return;
     if (resp->anstype == ANSTYPE_ERROR) {
@@ -434,71 +319,19 @@ int main(int argc, char *argv[]) {
 
     int flag_list = 0;
     int flag_terminate = 0; //-q
-    int flag_create = 0;    //-c
-    int flag_combine = 0;   //-s
-    int flag_remove = 0;    //-r
     int flag_times = 0;     //-x
     int flag_stdout = 0;    //-o
     int flag_stderr = 0;    //-e
 
-    int flag_no_timing = 0; //-n
-
-    uint64_t minutes = 0;
-    uint32_t hours = 0;
-    uint8_t daysofweek = 0;
-
-    //-c args
-    char *c_first = NULL;
-    char **c_extra = NULL;
-    uint32_t c_extra_count = 0;
-
-    //-s args
-    char *s_first = NULL;
-    uint64_t *s_taskids = NULL;
-    uint32_t s_nbtasks = 0;
-
-    uint64_t single_taskid = 0; //for -r/-x/-o/-e
+    uint64_t single_taskid = 0; //for -x/-o/-e
     int have_single_taskid = 0;
 
-    const char *optstr = "lx:o:e:c:s:r:qm:H:d:n:p:";
-
-    //Track if any timing option was provided explicitly
-    int timing_option_used = 0;
+    const char *optstr = "lx:o:e:qp:";
 
     while ((opt = getopt(argc, argv, optstr)) != -1) {
         switch (opt) {
             case 'l': flag_list = 1; break;
             case 'q': flag_terminate = 1; break;
-            case 'm':
-                if (optarg) {
-                    if (parse_minutes(optarg, &minutes) != 0) {
-                        fprintf(stderr, "Invalid minutes value: %s (expected 0-59 or comma-separated list or *)\n", optarg);
-                        return 2;
-                    }
-                    timing_option_used = 1;
-                }
-                break;
-            case 'H':
-                if (optarg) {
-                    if (parse_hours(optarg, &hours) != 0) {
-                        fprintf(stderr, "Invalid hours value: %s (expected 0-23 or comma-separated list or *)\n", optarg);
-                        return 2;
-                    }
-                    timing_option_used = 1;
-                }
-                break;
-            case 'd':
-                if (optarg) {
-                    if (parse_daysofweek(optarg, &daysofweek) != 0) {
-                        fprintf(stderr, "Invalid daysofweek: %s (expected comma-separated numbers 0..6 or *)\n", optarg);
-                        return 2;
-                    }
-                    timing_option_used = 1;
-                }
-                break;
-            case 'n':
-                flag_no_timing = 1;
-                break;
         case 'p':
                 if (optarg && optarg[0] != '\0') {
                     strncpy(run_dir, optarg, sizeof(run_dir) - 1);
@@ -507,22 +340,6 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "Error: -p requires a directory argument\n");
                     return 2;
                 }
-                break;
-            case 'c':
-                flag_create = 1;
-                c_first = optarg;
-                break;
-            case 's':
-                flag_combine = 1;
-                s_first = optarg;
-                break;
-            case 'r':
-                flag_remove = 1;
-                if (parse_taskid(optarg, &single_taskid) != 0) {
-                    fprintf(stderr, "Invalid taskid for -r: %s\n", optarg);
-                    return 2;
-                }
-                have_single_taskid = 1;
                 break;
             case 'x':
                 flag_times = 1;
@@ -555,78 +372,15 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (flag_create && c_first) {
-        int rem = argc - optind;
-        c_extra_count = 1 + (rem > 0 ? rem : 0);
-        c_extra = calloc(c_extra_count, sizeof(char*));
-        if (!c_extra) { perror("calloc"); return 1; }
-        c_extra[0] = strdup(c_first);
-        for (int i = 0; i < rem; ++i) {
-            c_extra[1 + i] = strdup(argv[optind + i]);
-        }
-    } else if (flag_combine && s_first) {
-        int rem = argc - optind;
-        s_nbtasks = 1 + (rem > 0 ? rem : 0);
-        s_taskids = calloc(s_nbtasks, sizeof(uint64_t));
-        if (!s_taskids) { perror("calloc"); return 1; }
-        if (parse_taskid(s_first, &s_taskids[0]) != 0) {
-            fprintf(stderr, "Invalid taskid: %s\n", s_first);
-            free(s_taskids); return 2;
-        }
-        for (int i = 0; i < rem; ++i) {
-            uint64_t tid;
-            if (parse_taskid(argv[optind + i], &tid) != 0) {
-                fprintf(stderr, "Invalid taskid: %s\n", argv[optind + i]);
-                free(s_taskids); return 2;
-            }
-            s_taskids[1 + i] = tid;
-        }
-    }
-
-    int n_actions = flag_list + flag_terminate + flag_create + flag_combine + flag_remove + flag_times + flag_stdout + flag_stderr;
+    int n_actions = flag_list + flag_terminate + flag_times + flag_stdout + flag_stderr;
     if (n_actions == 0) {
-        fprintf(stderr, "No action specified. Use -l, -c, -s, -r, -x, -o, -e or -q.\n");
+        fprintf(stderr, "No action specified. Use -l, -x, -o, -e or -q.\n");
         return 2;
     }
 
-    if ((flag_create || flag_combine) && (flag_list || flag_terminate || flag_times || flag_stdout || flag_stderr || flag_remove)) {
-        fprintf(stderr, "Invalid combination: -c/-s cannot be combined with -l/-x/-o/-e/-r/-q\n");
-        return 2;
-    }
-    if (flag_create && flag_combine) {
-        fprintf(stderr, "-c and -s are mutually exclusive\n");
-        return 2;
-    }
-    if (flag_no_timing && !(flag_create || flag_combine)) {
-        fprintf(stderr, "-n (no-timing) must be combined with -c or -s\n");
-        return 2;
-    }
-    if ((flag_times || flag_stdout || flag_stderr || flag_remove) && !have_single_taskid) {
+    if ((flag_times || flag_stdout || flag_stderr) && !have_single_taskid) {
         fprintf(stderr, "Option requires a taskid argument\n");
         return 2;
-    }
-
-    //Timing
-    if (timing_option_used && !(flag_create || flag_combine)) {
-        fprintf(stderr, "Timing options (-m, -H, -d) must be combined with -c or -s\n");
-        return 2;
-    }
-    if (flag_no_timing && timing_option_used) {
-        fprintf(stderr, "-n (no-timing) cannot be combined with -m/-H/-d\n");
-        return 2;
-    }
-
-    //Build timing structure
-    timing_t timing;
-    memset(&timing, 0, sizeof(timing));
-    if (flag_no_timing) {
-        timing.minutes = 0;
-        timing.hours = 0;
-        timing.daysofweek = 0;
-    } else {
-        timing.minutes = minutes;
-        timing.hours = hours;
-        timing.daysofweek = daysofweek;
     }
 
     //Build request
@@ -637,26 +391,6 @@ int main(int argc, char *argv[]) {
         req->opcode = OPCODE_LIST;
     } else if (flag_terminate) {
         req->opcode = OPCODE_TERMINATE;
-    } else if (flag_create) {
-        req->opcode = OPCODE_CREATE;
-        req->u.create.timing = timing;
-        req->u.create.argc = c_extra_count;
-        req->u.create.argv = calloc(c_extra_count, sizeof(char*));
-        if (!req->u.create.argv) { perror("calloc"); free(req); return 1; }
-        for (uint32_t i = 0; i < c_extra_count; ++i) {
-            req->u.create.argv[i] = strdup(c_extra[i]);
-        }
-    } else if (flag_combine) {
-        req->opcode = OPCODE_COMBINE;
-        req->u.combine.timing = timing;
-        req->u.combine.type = type_from_str("SQ"); // Sequence
-        req->u.combine.nbtasks = s_nbtasks;
-        req->u.combine.taskids = calloc(s_nbtasks, sizeof(uint64_t));
-        if (!req->u.combine.taskids) { perror("calloc"); free_request_allocs(req); free(req); return 1; }
-        for (uint32_t i = 0; i < s_nbtasks; ++i) req->u.combine.taskids[i] = s_taskids[i];
-    } else if (flag_remove) {
-        req->opcode = OPCODE_REMOVE;
-        req->u.query.taskid = single_taskid;
     } else if (flag_times) {
         req->opcode = OPCODE_TIMES_EXITCODES;
         req->u.query.taskid = single_taskid;
@@ -672,19 +406,48 @@ int main(int argc, char *argv[]) {
         return 2;
     }
 
-    //Open pipes
+    // Ouvrir les tubes nommés
     int req_fd = -1, rep_fd = -1;
     if (open_pipes_client(run_dir, &req_fd, &rep_fd) != 0) {
         perror("open_pipes_client");
-        free_request_allocs(req);
-        free(req);
+        free_request(req);
         return 1;
     }
 
     if (send_request(req_fd, req) != 0) {
         perror("send_request");
-        free_request_allocs(req);
-        free(req);
+        free_request(req);
+        close(req_fd);
+        close(rep_fd);
+        return 1;
+    }
+
+    // Attendre que des données soient disponibles avec un timeout (5 secondes)
+    fd_set readfds;
+    struct timeval timeout;
+    FD_ZERO(&readfds);
+    FD_SET(rep_fd, &readfds);
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    
+    int select_result = select(rep_fd + 1, &readfds, NULL, NULL, &timeout);
+    if (select_result < 0) {
+        perror("select");
+        free_request(req);
+        close(req_fd);
+        close(rep_fd);
+        return 1;
+    }
+    if (select_result == 0) {
+        fprintf(stderr, "Timeout: no response from daemon (is it running?)\n");
+        free_request(req);
+        close(req_fd);
+        close(rep_fd);
+        return 1;
+    }
+    if (!FD_ISSET(rep_fd, &readfds)) {
+        fprintf(stderr, "Error: reply pipe not ready\n");
+        free_request(req);
         close(req_fd);
         close(rep_fd);
         return 1;
@@ -693,8 +456,7 @@ int main(int argc, char *argv[]) {
     response_t *resp = NULL;
     if (receive_response(rep_fd, &resp, req->opcode) != 0) {
         perror("receive_response");
-        free_request_allocs(req);
-        free(req);
+        free_request(req);
         close(req_fd);
         close(rep_fd);
         return 1;
@@ -712,6 +474,15 @@ int main(int argc, char *argv[]) {
         case OPCODE_STDERR:
             handle_output_response(resp);
             break;
+        case OPCODE_TERMINATE:
+            if (resp->anstype == ANSTYPE_OK) {
+                // Pas de sortie pour TERMINATE (succès silencieux)
+            } else if (resp->anstype == ANSTYPE_ERROR) {
+                fprintf(stderr, "ERROR: %s\n", errcode_to_str(resp->u.error.errcode));
+            } else {
+                fprintf(stderr, "Unknown response anstype=0x%04x\n", resp->anstype);
+            }
+            break;
         default:
             if (resp->anstype == ANSTYPE_OK) {
                 puts("OK");
@@ -726,18 +497,11 @@ int main(int argc, char *argv[]) {
         ret_code = 1;
     }
 
-    //Cleanup
+    // Libérer la mémoire
     if (resp) free_response(resp);
-    free_request_allocs(req);
-    free(req);
+    free_request(req);  // free_request fait déjà le free(req)
     close(req_fd);
     close(rep_fd);
-
-    if (c_extra) {
-        for (uint32_t i = 0; i < c_extra_count; ++i) free(c_extra[i]);
-        free(c_extra);
-    }
-    if (s_taskids) free(s_taskids);
 
     return ret_code;
 }

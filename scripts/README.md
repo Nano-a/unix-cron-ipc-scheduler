@@ -2,6 +2,12 @@
 
 Ce dossier contient les scripts utilitaires pour tester, valider et faciliter le développement du projet.
 
+## 🎯 Vue d'Ensemble
+
+Ce dossier contient des scripts shell pour automatiser certaines tâches de développement et de test.
+
+**Note** : Les scripts de test officiels du professeur se trouvent dans `../tests-prof/`, pas dans ce dossier.
+
 ## 📁 Fichiers
 
 ### `test_integration_j1.sh` - Script de Test d'Intégration Jalon 1

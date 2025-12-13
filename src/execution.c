@@ -157,6 +157,11 @@ int execute_simple_command(const command_t *cmd,
     }
 
     if (pid == 0) {
+        // Créer un nouveau groupe de session pour isoler complètement la commande
+        // Cela permet à la commande de continuer même si le démon est tué
+        // setsid() crée un nouveau groupe de session ET un nouveau groupe de processus
+        setsid();
+        
         close(stdout_pipe[0]);
         close(stderr_pipe[0]);
         if (dup2(stdout_pipe[1], STDOUT_FILENO) < 0 ||

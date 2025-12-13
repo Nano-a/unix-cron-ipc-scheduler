@@ -136,15 +136,31 @@ Retourner les buffers concaténés et last_exit
 
 ### `protocol.h` - Interface de Protocole
 
-**Rôle** : Définit les structures et fonctions pour la communication client-serveur (à implémenter dans les jalons suivants).
+**Rôle** : Définit les structures et fonctions pour la communication client-démon via tubes nommés.
 
-**État actuel** : Interface définie, implémentation à venir.
-
-**Fonctionnalités prévues** :
-- Structures de requêtes/réponses
+**Fonctionnalités (Jalon 2)** :
+- Structures de requêtes/réponses (request_t, response_t)
+- Codes d'opération : LIST, TIMES_EXITCODES, STDOUT, STDERR, TERMINATE
+- Codes d'erreur : NOT_FOUND, NOT_RUN
 - Fonctions d'envoi/réception de messages
-- Gestion des codes d'opération (CREATE, DELETE, QUERY, etc.)
-- Gestion des codes d'erreur
+- Gestion des tubes nommés (FIFO)
+
+**Fonctionnalités prévues (Rendu Final)** :
+- Codes d'opération : CREATE, REMOVE, COMBINE
+
+**Structures principales** :
+- `request_t` : Structure de requête client → démon
+- `response_t` : Structure de réponse démon → client
+- `OPCODE_*` : Codes d'opération
+- `ANSTYPE_*` : Types de réponse (OK, ERROR)
+- `ERRCODE_*` : Codes d'erreur
+
+**Fonctions clés** :
+- `send_request()` / `receive_request()` : Envoi/réception de requêtes
+- `send_response()` / `receive_response()` : Envoi/réception de réponses
+- `open_pipes_daemon()` / `open_pipes_client()` : Ouverture des tubes nommés
+- `init_pipes()` : Initialisation des pipes
+- `free_request()` / `free_response()` : Libération mémoire
 
 ---
 

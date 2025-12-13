@@ -7,6 +7,7 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <errno.h>
 
 #include <ctype.h>
@@ -21,24 +22,28 @@
 #include <pthread.h>
 
 static volatile sig_atomic_t g_stop = 0;
-static int g_debug_logs = 0; // 0 = désactivé, 1 = activé (avec -d)
+static int g_debug_logs = 0;
 
-// Macro pour logs de debug (écrit aussi dans un fichier pour les tests)
+// Macro pour logs de debug (désactivée par défaut, activée avec -d)
 #define DEBUG_LOG(...) do { \
     if (g_debug_logs) { \
         fprintf(stderr, __VA_ARGS__); \
-        FILE *logfile = fopen("/tmp/erraid_debug.log", "a"); \
-        if (logfile) { \
-            fprintf(logfile, __VA_ARGS__); \
-            fclose(logfile); \
-        } \
     } \
 } while(0)
+
+// Structure pour passer les paramètres d'exécution de tâche à un thread
+typedef struct {
+    const char *run_dir;
+    const task_t *task;
+    time_t exec_timestamp;
+} task_exec_params_t;
 
 // Forward declarations
 static int should_execute_task_simple(const task_t *task);
 static void* task_execution_thread(void *arg);
+static void* async_task_executor(void *arg);
 int execute_task(const char *run_dir, const task_t *task);
+int execute_task_with_timestamp(const char *run_dir, const task_t *task, time_t exec_timestamp);
 
 static void handle_signal(int sig) {
     (void)sig;
@@ -130,7 +135,8 @@ typedef struct {
     int last_executed_minute; // -1 si jamais exécutée
 } task_execution_memory_t;
 
-// Version simplifiée pour le thread (comme jalon 1)
+// Vérifie si une tâche doit être exécutée maintenant
+// (exécution uniquement à la seconde 0 ou 1 de chaque minute)
 static int should_execute_task_simple(const task_t *task) {
     if (!task) {
         return 0;
@@ -141,128 +147,168 @@ static int should_execute_task_simple(const task_t *task) {
         return 0;
     }
 
-    // DEBUG: Log chaque vérification
-    DEBUG_LOG("[DEBUG] should_execute_task_simple: taskid=%lu, time=%02d:%02d:%02d, tm_sec=%d\n",
-              (unsigned long)task->taskid, tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec, tm_now.tm_sec);
-
     // Exécution uniquement au début de la minute (comme cron)
-    if (tm_now.tm_sec != 0) {
-        DEBUG_LOG("[DEBUG] Rejected: tm_sec != 0 (tm_sec=%d)\n", tm_now.tm_sec);
+    // Accepter tm_sec == 0 ou 1 (pour le cas où on vérifie à la seconde 1)
+    if (tm_now.tm_sec > 1) {
         return 0;
     }
 
     if (!(task->timing.minutes & (1ULL << tm_now.tm_min))) {
-        DEBUG_LOG("[DEBUG] Rejected: minutes bit not set (minute=%d)\n", tm_now.tm_min);
         return 0;
     }
     if (!(task->timing.hours & (1U << tm_now.tm_hour))) {
-        DEBUG_LOG("[DEBUG] Rejected: hours bit not set (hour=%d)\n", tm_now.tm_hour);
         return 0;
     }
     if (!(task->timing.daysofweek & (1U << tm_now.tm_wday))) {
-        DEBUG_LOG("[DEBUG] Rejected: daysofweek bit not set (wday=%d)\n", tm_now.tm_wday);
         return 0;
     }
-    
-    DEBUG_LOG("[DEBUG] ✅ Task %lu SHOULD EXECUTE at %02d:%02d:%02d\n",
-              (unsigned long)task->taskid, tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
     return 1;
 }
 
-// Thread pour l'exécution périodique des tâches (avec préchargement pour éviter délais)
+// Thread pour l'exécution périodique des tâches (vérification multiple dans première seconde)
 static void* task_execution_thread(void *arg) {
     const char *run_dir = (const char *)arg;
     time_t start_time = time(NULL);
     struct tm tm_start;
     localtime_r(&start_time, &tm_start);
     
-    DEBUG_LOG("[DEBUG] 🚀 Task execution thread started at %02d:%02d:%02d\n",
-              tm_start.tm_hour, tm_start.tm_min, tm_start.tm_sec);
-    
     // Précharger les tâches une fois au démarrage
     task_t **cached_tasks = NULL;
     size_t cached_count = 0;
-    if (load_all_tasks(run_dir, &cached_tasks, &cached_count) == 0) {
-        DEBUG_LOG("[DEBUG] ✅ Preloaded %zu tasks\n", cached_count);
+    if (load_all_tasks(run_dir, &cached_tasks, &cached_count) < 0) {
+        return NULL;
     }
     
-    // Synchroniser sur la prochaine seconde 0
+    // Mémoriser la dernière minute où chaque tâche a été exécutée
+    int *last_executed_minute = NULL;
+    if (cached_count > 0) {
+        last_executed_minute = calloc(cached_count, sizeof(int));
+        for (size_t i = 0; i < cached_count; i++) {
+            last_executed_minute[i] = -1;
+        }
+    }
+    
+    // Vérifier immédiatement si on est à la seconde 0 ou 1
+    if (tm_start.tm_sec <= 1 && cached_tasks) {
+        int start_minute_id = tm_start.tm_year * 525600 + tm_start.tm_mon * 43200 + 
+                             tm_start.tm_mday * 1440 + tm_start.tm_hour * 60 + tm_start.tm_min;
+        for (size_t i = 0; i < cached_count && !g_stop; ++i) {
+            if (should_execute_task_simple(cached_tasks[i])) {
+                time_t exec_time = start_time - tm_start.tm_sec;
+                execute_task_with_timestamp(run_dir, cached_tasks[i], exec_time);
+                if (last_executed_minute) {
+                    last_executed_minute[i] = start_minute_id;
+                }
+            }
+        }
+    }
+    
+    // Synchroniser sur la prochaine seconde 0 si nécessaire
     int secs_to_wait = 60 - tm_start.tm_sec;
-    if (secs_to_wait > 0 && secs_to_wait < 60) {
-        DEBUG_LOG("[DEBUG] ⏳ Waiting %d seconds to sync on next minute (second 0)\n", secs_to_wait);
+    if (secs_to_wait > 1 && secs_to_wait < 60) {
         sleep(secs_to_wait);
     }
     
     int iteration = 0;
-    while (!g_stop) {
+    const int MAX_ITERATIONS = 1000000; // Limite pour éviter boucle infinie (environ 11 jours si sleep(1))
+    while (!g_stop && iteration < MAX_ITERATIONS) {
         iteration++;
         time_t now = time(NULL);
         struct tm tm_now;
         localtime_r(&now, &tm_now);
         
-        // Recharger les tâches toutes les 10 itérations pour détecter les nouvelles tâches
+        // Recharger les tâches périodiquement pour détecter les nouvelles tâches
         if (iteration % 10 == 0) {
             if (cached_tasks) {
                 free_task_array(cached_tasks, cached_count);
+                free(last_executed_minute);
                 cached_tasks = NULL;
                 cached_count = 0;
+                last_executed_minute = NULL;
             }
             if (load_all_tasks(run_dir, &cached_tasks, &cached_count) == 0) {
-                DEBUG_LOG("[DEBUG] 🔄 Reloaded %zu tasks\n", cached_count);
+                last_executed_minute = calloc(cached_count, sizeof(int));
+                for (size_t i = 0; i < cached_count; i++) {
+                    last_executed_minute[i] = -1;
+                }
             }
         }
         
-        DEBUG_LOG("[DEBUG] 🔄 Iteration %d: Checking at %02d:%02d:%02d (tm_sec=%d) with %zu cached tasks\n",
-                  iteration, tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec, tm_now.tm_sec, cached_count);
+        // Calculer un identifiant unique pour la minute actuelle
+        int current_minute_id = tm_now.tm_year * 525600 + tm_now.tm_mon * 43200 + 
+                                tm_now.tm_mday * 1440 + tm_now.tm_hour * 60 + tm_now.tm_min;
         
-        // Vérifier et exécuter les tâches (utiliser les tâches en cache)
+        // Vérifier et exécuter les tâches
         if (cached_tasks) {
             for (size_t i = 0; i < cached_count && !g_stop; ++i) {
+                // Éviter les doubles exécutions dans la même minute
+                if (last_executed_minute && last_executed_minute[i] == current_minute_id) {
+                    continue;
+                }
+                
                 if (should_execute_task_simple(cached_tasks[i])) {
-                    time_t exec_time = time(NULL);
-                    struct tm tm_exec;
-                    localtime_r(&exec_time, &tm_exec);
-                    DEBUG_LOG("[DEBUG] 🎯 EXECUTING task %lu at %02d:%02d:%02d\n",
-                              (unsigned long)cached_tasks[i]->taskid, tm_exec.tm_hour, tm_exec.tm_min, tm_exec.tm_sec);
-                    execute_task(run_dir, cached_tasks[i]);
-                    time_t after_exec = time(NULL);
-                    DEBUG_LOG("[DEBUG] ✅ Task %lu executed in %ld seconds\n",
-                              (unsigned long)cached_tasks[i]->taskid, after_exec - exec_time);
+                    // Calculer le timestamp d'exécution (arrondir à la seconde 0 si on est à la seconde 1)
+                    time_t exec_time = now;
+                    if (tm_now.tm_sec == 1) {
+                        exec_time = now - 1;
+                    }
+                    
+                    // Exécuter la tâche de manière asynchrone pour ne pas bloquer le thread
+                    task_exec_params_t *params = malloc(sizeof(task_exec_params_t));
+                    if (params) {
+                        params->run_dir = run_dir;
+                        params->task = cached_tasks[i];
+                        params->exec_timestamp = exec_time;
+                        
+                        pthread_t exec_thread;
+                        pthread_attr_t attr;
+                        pthread_attr_init(&attr);
+                        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+                        if (pthread_create(&exec_thread, &attr, async_task_executor, params) != 0) {
+                            free(params);
+                        }
+                        pthread_attr_destroy(&attr);
+                    }
+                    
+                    // Mémoriser l'exécution pour éviter les doubles exécutions
+                    if (last_executed_minute) {
+                        last_executed_minute[i] = current_minute_id;
+                    }
                 }
             }
         }
 
-        // Calculer le temps jusqu'à la prochaine seconde 0
-        now = time(NULL);
-        localtime_r(&now, &tm_now);
-        int secs_to_next_minute = 60 - tm_now.tm_sec;
-        
-        DEBUG_LOG("[DEBUG] 😴 Sleeping %d seconds until next minute (current: %02d:%02d:%02d)\n",
-                  secs_to_next_minute, tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec);
-        
-        if (secs_to_next_minute > 0 && secs_to_next_minute <= 60) {
-            sleep(secs_to_next_minute);
-        } else {
-            sleep(1); // Fallback
-        }
-        
-        time_t after_sleep = time(NULL);
-        struct tm tm_after;
-        localtime_r(&after_sleep, &tm_after);
-        DEBUG_LOG("[DEBUG] ⏰ Woke up at %02d:%02d:%02d\n",
-                  tm_after.tm_hour, tm_after.tm_min, tm_after.tm_sec);
+        sleep(1);
     }
     
     // Nettoyer
     if (cached_tasks) {
         free_task_array(cached_tasks, cached_count);
     }
+    if (last_executed_minute) {
+        free(last_executed_minute);
+    }
     
-    DEBUG_LOG("[DEBUG] 🛑 Task execution thread stopping\n");
+    return NULL;
+}
+
+// Thread pour exécuter une tâche de manière asynchrone
+static void* async_task_executor(void *arg) {
+    task_exec_params_t *params = (task_exec_params_t *)arg;
+    if (!params) {
+        return NULL;
+    }
+    
+    execute_task_with_timestamp(params->run_dir, params->task, params->exec_timestamp);
+    free(params);
     return NULL;
 }
 
 int execute_task(const char *run_dir, const task_t *task) {
+    return execute_task_with_timestamp(run_dir, task, time(NULL));
+}
+
+int execute_task_with_timestamp(const char *run_dir, const task_t *task, time_t exec_timestamp) {
     if (!run_dir || !task || !task->cmd) {
         errno = EINVAL;
         return -1;
@@ -288,7 +334,8 @@ int execute_task(const char *run_dir, const task_t *task) {
         return -1;
     }
 
-    int64_t timestamp = (int64_t)time(NULL);
+    // Utiliser le timestamp passé en paramètre (celui de la vérification à la seconde 0)
+    int64_t timestamp = (int64_t)exec_timestamp;
     append_execution_log(run_dir, task->taskid, timestamp, exitcode);
     save_stdout(run_dir, task->taskid, stdout_buf, stdout_len);
     save_stderr(run_dir, task->taskid, stderr_buf, stderr_len);
@@ -298,10 +345,21 @@ int execute_task(const char *run_dir, const task_t *task) {
     return 0;
 }
 
-static void handle_request(const char *run_dir, int request_fd, int reply_fd) {
+static void handle_request(const char *run_dir, int request_fd, int *reply_fd_ptr) {
+    int reply_fd = *reply_fd_ptr;
     request_t *req = NULL;
     if (receive_request(request_fd, &req) < 0) {
-        perror("receive_request");
+        // Si l'erreur est due à une déconnexion du client ou à une fin de fichier, c'est normal
+        // Ne pas afficher d'erreur dans ce cas pour éviter le spam
+        // EAGAIN/EWOULDBLOCK : pas de données disponibles (ne devrait pas arriver avec select)
+        // EPIPE : pipe fermé par l'autre extrémité
+        // EBADF : descripteur invalide
+        // EBADMSG : message invalide (fin de fichier)
+        if (errno != EPIPE && errno != EBADF && errno != EBADMSG && 
+            errno != EAGAIN && errno != EWOULDBLOCK) {
+            // Afficher l'erreur seulement si ce n'est pas une erreur "normale"
+            DEBUG_LOG("[DEBUG] receive_request error: %s\n", strerror(errno));
+        }
         return;
     }
 
@@ -323,6 +381,7 @@ static void handle_request(const char *run_dir, int request_fd, int reply_fd) {
             resp->anstype = ANSTYPE_OK;
             resp->u.list_ok.nbtasks = (uint32_t)count;
             resp->u.list_ok.tasks = tasks;
+            resp->opcode_used = OPCODE_LIST;
         }
         break;
     }
@@ -343,17 +402,13 @@ static void handle_request(const char *run_dir, int request_fd, int reply_fd) {
             resp->u.error.errcode = ERRCODE_NOT_FOUND;
             break;
         }
-        if (nbruns == 0) {
-            free(timestamps);
-            free(exitcodes);
-            resp->anstype = ANSTYPE_ERROR;
-            resp->u.error.errcode = ERRCODE_NOT_RUN;
-            break;
-        }
+        // Si nbruns == 0, on retourne quand même OK avec une liste vide (pas d'erreur)
         resp->anstype = ANSTYPE_OK;
         resp->u.times_exitcodes_ok.nbruns = nbruns;
+        // Si nbruns == 0, timestamps et exitcodes peuvent être NULL, on les initialise à NULL
         resp->u.times_exitcodes_ok.timestamps = timestamps;
         resp->u.times_exitcodes_ok.exitcodes = exitcodes;
+        resp->opcode_used = OPCODE_TIMES_EXITCODES;
         break;
     }
     case OPCODE_STDOUT:
@@ -372,17 +427,29 @@ static void handle_request(const char *run_dir, int request_fd, int reply_fd) {
                  ? read_stdout(run_dir, req->u.query.taskid, &output, &len)
                  : read_stderr(run_dir, req->u.query.taskid, &output, &len);
         if (rc < 0) {
-            resp->anstype = ANSTYPE_ERROR;
-            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            // Vérifier si c'est parce que la tâche n'a jamais été exécutée
+            // read_stdout/read_stderr retourne -1 si le fichier n'existe pas
+            // On doit distinguer "tâche non trouvée" de "tâche jamais exécutée"
+            if (errno == ENOENT) {
+                // Le fichier n'existe pas = tâche jamais exécutée
+                resp->anstype = ANSTYPE_ERROR;
+                resp->u.error.errcode = ERRCODE_NOT_RUN;
+            } else {
+                // Autre erreur = tâche non trouvée
+                resp->anstype = ANSTYPE_ERROR;
+                resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            }
             break;
         }
         resp->anstype = ANSTYPE_OK;
-        resp->u.output_ok.output = output;
+        resp->u.output_ok.output = output ? output : calloc(1, 1); // Allouer au moins 1 octet si NULL
         resp->u.output_ok.len = len;
+        resp->opcode_used = req->opcode; // OPCODE_STDOUT ou OPCODE_STDERR
         break;
     }
     case OPCODE_TERMINATE:
         resp->anstype = ANSTYPE_OK;
+        resp->opcode_used = OPCODE_TERMINATE;
         g_stop = 1;
         break;
     default:
@@ -393,6 +460,13 @@ static void handle_request(const char *run_dir, int request_fd, int reply_fd) {
 
     if (send_response(reply_fd, resp) < 0) {
         perror("send_response");
+    } else {
+        // Fermer le tube de réponse immédiatement après avoir envoyé la réponse
+        // pour indiquer au client que la réponse est complète (EOF)
+        // Pour un pipe nommé, les données sont déjà dans le buffer du kernel,
+        // donc pas besoin de fsync() qui pourrait bloquer
+        close(reply_fd);
+        *reply_fd_ptr = -1; // Indiquer que le tube est fermé
     }
 
     free_request(req);
@@ -401,19 +475,15 @@ static void handle_request(const char *run_dir, int request_fd, int reply_fd) {
 
 void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
     int maxfd = request_fd;
-    pthread_t task_thread;
     
-    // Créer un thread séparé pour l'exécution des tâches (comme jalon 1)
-    // Cela garantit que les tâches sont vérifiées toutes les secondes avec sleep(1)
-    DEBUG_LOG("[DEBUG] Creating task execution thread...\n");
-    if (pthread_create(&task_thread, NULL, task_execution_thread, (void *)run_dir) != 0) {
-        perror("pthread_create");
-        return;
-    }
-    DEBUG_LOG("[DEBUG] Task execution thread created successfully\n");
+    DEBUG_LOG("[DEBUG] daemon_loop started, request_fd=%d, reply_fd=%d\n", request_fd, reply_fd);
     
+    // Le thread d'exécution des tâches est déjà démarré dans main()
     // Thread principal : gère uniquement les requêtes client avec select() (jalon 2)
-    while (!g_stop) {
+    int daemon_iterations = 0;
+    const int MAX_DAEMON_ITERATIONS = 1000000; // Limite pour éviter boucle infinie
+    while (!g_stop && daemon_iterations < MAX_DAEMON_ITERATIONS) {
+        daemon_iterations++;
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(request_fd, &readfds);
@@ -426,19 +496,49 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
         int ret = select(maxfd + 1, &readfds, NULL, NULL, &tv);
 
         if (ret < 0) {
-            if (errno == EINTR) continue;
-            perror("select");
-            break;
+            if (errno == EINTR) {
+                DEBUG_LOG("[DEBUG] select interrupted, continuing...\n");
+                continue;
+            }
+            // Ne pas arrêter le démon sur une erreur select, juste logger
+            DEBUG_LOG("[DEBUG] select error: %s\n", strerror(errno));
+            continue; // Continuer au lieu de break
         }
 
         // Une requête client disponible
         if (ret > 0 && FD_ISSET(request_fd, &readfds)) {
-            handle_request(run_dir, request_fd, reply_fd);
+            DEBUG_LOG("[DEBUG] Client request detected\n");
+            // Vérifier que le fd est toujours valide avant de lire
+            if (request_fd < 0) {
+                DEBUG_LOG("[DEBUG] request_fd invalid, breaking\n");
+                break;
+            }
+            // Rouvrir le tube de réponse si nécessaire (il a été fermé dans handle_request)
+            // On doit le rouvrir AVANT de traiter la requête pour pouvoir répondre
+            if (reply_fd < 0) {
+                char reply_path[1024];
+                int len = snprintf(reply_path, sizeof(reply_path), "%s/pipes/erraid-reply-pipe", run_dir);
+                if (len >= 0 && len < (int)sizeof(reply_path)) {
+                    // Utiliser O_RDWR comme dans open_pipes_daemon pour éviter le blocage
+                    reply_fd = open(reply_path, O_RDWR);
+                    if (reply_fd < 0) {
+                        DEBUG_LOG("[DEBUG] Failed to reopen reply pipe: %s\n", strerror(errno));
+                        // Si on ne peut pas rouvrir, on ne peut pas répondre, donc on skip cette requête
+                        continue;
+                    }
+                    DEBUG_LOG("[DEBUG] Reopened reply pipe: fd=%d\n", reply_fd);
+                }
+            }
+            
+            handle_request(run_dir, request_fd, &reply_fd);
         }
+        // ret == 0 signifie timeout, c'est normal, on continue
     }
     
-    // Attendre que le thread se termine
-    pthread_join(task_thread, NULL);
+    if (daemon_iterations >= MAX_DAEMON_ITERATIONS) {
+        DEBUG_LOG("[DEBUG] ⚠️ Daemon loop stopped: max iterations reached (%d)\n", MAX_DAEMON_ITERATIONS);
+    }
+    DEBUG_LOG("[DEBUG] daemon_loop exiting (g_stop=%d, iterations=%d)\n", (int)g_stop, daemon_iterations);
 }
 
 
@@ -517,15 +617,27 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (open_pipes_daemon(pipes_dir, &request_fd, &reply_fd) < 0) {
-        perror("open_pipes_daemon");
-        return EXIT_FAILURE;
-    }
-
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
+    // Démarrer le thread d'exécution des tâches avant d'ouvrir les pipes
+    pthread_t task_thread;
+    if (pthread_create(&task_thread, NULL, task_execution_thread, (void *)run_dir) != 0) {
+        perror("pthread_create");
+        return EXIT_FAILURE;
+    }
+
+    if (open_pipes_daemon(pipes_dir, &request_fd, &reply_fd) < 0) {
+        perror("open_pipes_daemon");
+        g_stop = 1;
+        pthread_join(task_thread, NULL);
+        return EXIT_FAILURE;
+    }
+
     daemon_loop(run_dir, request_fd, reply_fd);
+    
+    // Attendre que le thread se termine
+    pthread_join(task_thread, NULL);
 
     if (request_fd >= 0) close(request_fd);
     if (reply_fd >= 0) close(reply_fd);

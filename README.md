@@ -13,21 +13,39 @@ Le projet suit une architecture modulaire avec séparation claire des responsabi
 
 ```
 projet-systeme-l3/
-├── src/              # Implémentations des modules
-│   ├── erraid.c      # Démon principal
-│   ├── tadmor.c      # Client de gestion
-│   ├── serialization.c  # Sérialisation/désérialisation binaire
-│   ├── task_tree.c   # Gestion de l'arborescence des tâches
-│   └── execution.c   # Exécution des commandes
-├── include/          # Interfaces publiques (headers)
+├── src/                      # Implémentations des modules
+│   ├── erraid.c              # Démon principal
+│   ├── tadmor.c              # Client de gestion
+│   ├── protocol.c            # Communication client-démon
+│   ├── serialization.c       # Sérialisation/désérialisation binaire
+│   ├── task_tree.c           # Gestion de l'arborescence des tâches
+│   └── execution.c           # Exécution des commandes
+├── include/                  # Interfaces publiques (headers)
 │   ├── serialization.h
 │   ├── task_tree.h
 │   ├── execution.h
 │   └── protocol.h
-├── scripts/         # Scripts de test et d'intégration
-├── logs-j1/        # Logs de test du Jalon 1
-├── Makefile         # Règles de compilation
-└── BACKLOG.md       # Gestion des tâches du projet
+├── tests-prof/               # Tests automatiques du professeur
+│   ├── test-jalon-1.py       # Tests Jalon 1 (12 tests)
+│   ├── run-tadmor-tests-jalon-2.sh  # Tests client Jalon 2
+│   └── run-erraid-tests-jalon-2.py  # Tests démon Jalon 2
+├── Fichier-md/               # Documentation complète du projet
+│   ├── README.md             # Index de la documentation
+│   ├── CONTEXTE.md           # Vue d'ensemble
+│   ├── ARCHITECTURE.md       # Architecture système
+│   ├── JALON_1.md           # Guide Jalon 1
+│   ├── JALON_2.md           # Guide Jalon 2
+│   ├── COMMANDES_ERRAID.md  # Commandes du démon
+│   ├── COMMANDES_TADMOR.md  # Commandes du client
+│   ├── TESTS_PROFESSEUR.md  # Tests automatiques
+│   ├── TESTS_MANUELS.md     # Tests manuels
+│   └── ERREURS.md           # Gestion des erreurs
+├── exemples-arborescences/   # Exemples d'arborescences de tâches
+├── autotests/                # Tests locaux (copie)
+├── scripts/                  # Scripts de test et d'intégration
+├── logs-j1/                  # Logs de test du Jalon 1
+├── Makefile                  # Règles de compilation
+└── AUTHORS.md                # Liste des contributeurs
 ```
 
 ## 🚀 Compilation et Installation
@@ -67,13 +85,38 @@ Le démon doit être lancé avec le répertoire de travail contenant les tâches
 
 Le démon :
 1. Charge toutes les tâches depuis `$run_dir/tasks/`
-2. Vérifie chaque seconde si une tâche doit être exécutée selon son timing
-3. Exécute les tâches éligibles et enregistre les résultats
-4. Gère les signaux SIGINT/SIGTERM pour s'arrêter proprement
+2. Démarre un thread d'exécution des tâches (vérifie toutes les secondes)
+3. Ouvre les tubes nommés pour la communication client (Jalon 2)
+4. Entre dans une boucle principale qui gère les requêtes client
+5. Exécute les tâches éligibles de manière asynchrone et enregistre les résultats
+6. Gère les signaux SIGINT/SIGTERM et la requête TERMINATE pour s'arrêter proprement
+
+**Voir** : `Fichier-md/COMMANDES_ERRAID.md` pour la documentation complète.
 
 ### Client tadmor
 
-Le client permet de gérer les tâches (fonctionnalités à venir dans les jalons suivants).
+Le client permet de communiquer avec le démon et consulter les tâches :
+
+**Jalon 2 - Requêtes consultatives** :
+- `-l` : Lister toutes les tâches
+- `-x TASKID` : Historique d'exécution d'une tâche
+- `-o TASKID` : Sortie standard de la dernière exécution
+- `-e TASKID` : Sortie d'erreur de la dernière exécution
+- `-q` : Arrêter le démon
+
+**Exemple** :
+```bash
+# Lister les tâches
+./tadmor -l -p /tmp/test-erraid/pipes
+
+# Voir l'historique d'une tâche
+./tadmor -x 0 -p /tmp/test-erraid/pipes
+
+# Voir la sortie standard
+./tadmor -o 0 -p /tmp/test-erraid/pipes
+```
+
+**Voir** : `Fichier-md/COMMANDES_TADMOR.md` pour la documentation complète.
 
 ## 📁 Structure des Tâches
 
@@ -121,24 +164,77 @@ Implémente l'exécution des commandes :
 Boucle principale du démon :
 - Chargement périodique des tâches
 - Vérification des conditions de timing
-- Exécution et journalisation
+- Exécution asynchrone des tâches (multithreading)
+- **Jalon 2** : Réception et traitement des requêtes client
+- Journalisation des résultats
+
+### 5. Communication (`protocol.c`)
+
+Gère la communication client-démon :
+- Tubes nommés (FIFO) pour les requêtes et réponses
+- Sérialisation/désérialisation des messages
+- Gestion des codes d'opération et d'erreur
+
+### 6. Client (`tadmor.c`)
+
+Interface utilisateur en ligne de commande :
+- Parsing des arguments
+- Envoi de requêtes au démon
+- Affichage formaté des réponses
 
 ## 📚 Documentation Détaillée
+
+### Documentation Complète
+
+Toute la documentation est organisée dans le dossier `Fichier-md/` :
+- **[Fichier-md/README.md](Fichier-md/README.md)** - Index de la documentation
+- **[Fichier-md/CONTEXTE.md](Fichier-md/CONTEXTE.md)** - Vue d'ensemble du projet
+- **[Fichier-md/ARCHITECTURE.md](Fichier-md/ARCHITECTURE.md)** - Architecture système
+- **[Fichier-md/JALON_1.md](Fichier-md/JALON_1.md)** - Guide complet du Jalon 1
+- **[Fichier-md/JALON_2.md](Fichier-md/JALON_2.md)** - Guide complet du Jalon 2
+- **[Fichier-md/COMMANDES_ERRAID.md](Fichier-md/COMMANDES_ERRAID.md)** - Commandes du démon
+- **[Fichier-md/COMMANDES_TADMOR.md](Fichier-md/COMMANDES_TADMOR.md)** - Commandes du client
+- **[Fichier-md/TESTS_PROFESSEUR.md](Fichier-md/TESTS_PROFESSEUR.md)** - Tests automatiques
+- **[Fichier-md/TESTS_MANUELS.md](Fichier-md/TESTS_MANUELS.md)** - Tests manuels
+- **[Fichier-md/ERREURS.md](Fichier-md/ERREURS.md)** - Gestion des erreurs
+
+### Documentation Technique
 
 Pour plus de détails sur chaque module, consultez les README.md dans chaque dossier :
 
 - [src/README.md](src/README.md) - Documentation des fichiers sources
 - [include/README.md](include/README.md) - Documentation des interfaces
 - [scripts/README.md](scripts/README.md) - Documentation des scripts
+- [tests-prof/README.md](tests-prof/README.md) - Tests du professeur
+- [exemples-arborescences/README.md](exemples-arborescences/README.md) - Exemples d'arborescences
 
 ## 🧪 Tests
 
-Des scripts de test sont disponibles dans le dossier `scripts/` :
+### Tests Automatiques du Professeur
+
+Les tests officiels se trouvent dans `tests-prof/` :
 
 ```bash
-# Test d'intégration du Jalon 1
-./scripts/test_integration_j1.sh
+# Tests Jalon 1 (12 tests)
+cd tests-prof
+python3 test-jalon-1.py
+
+# Tests Jalon 2 - Client (11 tests)
+bash run-tadmor-tests-jalon-2.sh
+
+# Tests Jalon 2 - Démon (11 tests)
+python3 run-erraid-tests-jalon-2.py
 ```
+
+**Résultat attendu** :
+- Jalon 1 : 12/12 tests réussis ✅
+- Jalon 2 : 11/11 tests réussis ✅
+
+**Prérequis** :
+- Python 3
+- Valgrind installé pour le test 12 du Jalon 1 (voir `Fichier-md/TESTS_PROFESSEUR.md`)
+
+**Voir** : `Fichier-md/TESTS_PROFESSEUR.md` pour la documentation complète des tests.
 
 ## 🔀 Workflow Git
 
@@ -155,13 +251,22 @@ Le projet suit un workflow Git standard :
 2. Développer et commiter régulièrement
 3. Pousser et créer une merge request vers `develop`
 
-## 📋 Gestion des Tâches
+## ✅ État du Projet
 
-Le fichier `BACKLOG.md` contient la liste complète des tâches du projet avec :
-- Prérequis
-- Dates de livraison
-- Responsables
-- Statut
+### Jalon 1 (25 novembre 2025) ✅
+- Démon avec arborescence statique
+- Exécution des tâches aux dates prescrites
+- Mise à jour des fichiers de log
+- **Tests** : 12/12 réussis ✅
+
+### Jalon 2 (15 décembre 2025) ✅
+- Communication client-démon via tubes nommés
+- Requêtes consultatives (LIST, TIMES_EXITCODES, STDOUT, STDERR, TERMINATE)
+- **Tests** : 11/11 réussis ✅
+
+### Rendu Final (10 janvier 2026) ⏳
+- Fonctionnalités à implémenter (CREATE, REMOVE, COMBINE)
+- **Note** : Non implémenté dans le code actuel
 
 ## 👥 Équipe
 
@@ -178,6 +283,15 @@ Tous les fichiers binaires utilisent le format **big-endian** pour garantir la p
 ## ⚠️ Notes Importantes
 
 - Le démon doit avoir les permissions d'écriture dans le répertoire de travail
-- Les tâches sont chargées dynamiquement à chaque cycle (1 seconde)
+- Les tâches sont chargées dynamiquement périodiquement (toutes les 10 secondes)
 - Le format `times-exitcodes` est binaire pur (pas de caractères de fin de ligne)
 - Les séquences sont exécutées dans l'ordre numérique strict (0, 1, 2, 3...)
+- **Multithreading** : Le démon utilise des threads pour l'exécution asynchrone des tâches
+- **Isolation** : Les processus enfants utilisent `setsid()` pour continuer après SIGTERM
+- **Communication** : Les tubes nommés doivent être dans le bon répertoire (avec `/pipes`)
+
+## 🔗 Liens Utiles
+
+- **Documentation complète** : `Fichier-md/README.md`
+- **Spécifications officielles** : `sy5-2025-2026/Projet/`
+- **Tests** : `tests-prof/README.md`

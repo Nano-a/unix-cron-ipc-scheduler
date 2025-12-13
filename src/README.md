@@ -15,26 +15,37 @@ Ce dossier contient tous les fichiers sources (`.c`) du projet. Chaque fichier i
 - Gestion des signaux (SIGINT, SIGTERM) pour arrêt propre
 - Exécution des tâches via le module `execution`
 
-**Algorithme principal** :
+**Algorithme principal (Jalon 1 + 2)** :
 ```
-1. Initialiser le répertoire de travail
+1. Initialiser le répertoire de travail et les tubes nommés
 2. Enregistrer les handlers de signaux
-3. Boucle infinie :
-   a. Charger toutes les tâches depuis $run_dir/tasks/
-   b. Pour chaque tâche :
-      - Vérifier si elle doit s'exécuter (should_execute_task)
-      - Si oui, l'exécuter (execute_task)
-   c. Libérer la mémoire des tâches
+3. Démarrer un thread d'exécution des tâches (vérifie toutes les secondes)
+4. Ouvrir les tubes nommés pour la communication client
+5. Boucle principale (daemon_loop) :
+   a. Utiliser select() pour attendre les requêtes client (timeout 1 seconde)
+   b. Si requête disponible : traiter et répondre
+   c. Le thread d'exécution continue en parallèle
+6. Sortir proprement (fermer pipes, arrêter threads)
+```
+
+**Thread d'exécution des tâches** :
+```
+1. Précharger toutes les tâches
+2. Boucle infinie :
+   a. Vérifier toutes les secondes quelles tâches doivent être exécutées
+   b. Exécuter les tâches éligibles de manière asynchrone (chaque tâche dans son thread)
+   c. Recharger les tâches périodiquement pour détecter les nouvelles
    d. Attendre 1 seconde
-4. Sortir proprement
 ```
 
 **Fonctions clés** :
-- `main()` : Point d'entrée, parse les arguments, lance la boucle
-- `daemon_loop()` : Boucle principale du démon
-- `load_all_tasks()` : Charge toutes les tâches depuis le répertoire
-- `should_execute_task()` : Vérifie si une tâche doit s'exécuter maintenant
-- `execute_task()` : Exécute une tâche et enregistre les résultats
+- `main()` : Point d'entrée, parse les arguments, lance le thread et la boucle
+- `task_execution_thread()` : Thread qui vérifie et exécute les tâches périodiquement
+- `daemon_loop()` : Boucle principale qui gère les requêtes client (Jalon 2)
+- `handle_request()` : Traite une requête client et génère la réponse
+- `should_execute_task_simple()` : Vérifie si une tâche doit s'exécuter maintenant
+- `execute_task_with_timestamp()` : Exécute une tâche avec un timestamp spécifique
+- `async_task_executor()` : Thread qui exécute une tâche de manière asynchrone
 
 ---
 
@@ -184,18 +195,60 @@ $run_dir/tasks/<taskid>/
 
 ---
 
+### `protocol.c` - Module de Communication
+
+**Rôle** : Gère la communication entre le client `tadmor` et le démon `erraid` via tubes nommés (FIFO).
+
+**Fonctionnalités principales** :
+- Création et ouverture des tubes nommés (request-pipe, reply-pipe)
+- Sérialisation/désérialisation des requêtes (request_t)
+- Sérialisation/désérialisation des réponses (response_t)
+- Gestion des codes d'opération (LIST, TIMES_EXITCODES, STDOUT, STDERR, TERMINATE)
+- Gestion des codes d'erreur (NOT_FOUND, NOT_RUN)
+
+**Tubes nommés** :
+- `erraid-request-pipe` : Client → Démon (requêtes)
+- `erraid-reply-pipe` : Démon → Client (réponses)
+
+**Format des messages** :
+- Tous les messages sont sérialisés en **big-endian**
+- Format défini dans `sy5-2025-2026/Projet/protocole.md`
+
+**Fonctions clés** :
+- `init_pipes()` : Crée les tubes nommés s'ils n'existent pas
+- `open_pipes_daemon()` : Ouvre les pipes pour le démon
+- `open_pipes_client()` : Ouvre les pipes pour le client
+- `send_request()` / `receive_request()` : Envoi/réception de requêtes
+- `send_response()` / `receive_response()` : Envoi/réception de réponses
+- `free_request()` / `free_response()` : Libération mémoire
+
+---
+
 ### `tadmor.c` - Client de Gestion
 
-**Rôle** : Client en ligne de commande pour gérer les tâches (à compléter dans les jalons suivants).
+**Rôle** : Client en ligne de commande pour communiquer avec le démon et gérer les tâches.
 
-**Fonctionnalités prévues** :
-- Création de tâches
-- Consultation des tâches
-- Suppression de tâches
-- Consultation des logs d'exécution
-- Communication avec le démon via protocole réseau
+**Fonctionnalités (Jalon 2)** :
+- `LIST` : Lister toutes les tâches
+- `TIMES_EXITCODES` : Historique d'exécution d'une tâche
+- `STDOUT` : Sortie standard de la dernière exécution
+- `STDERR` : Sortie d'erreur de la dernière exécution
+- `TERMINATE` : Arrêter le démon
 
-**État actuel** : Module en cours de développement (Jalon 1 terminé, fonctionnalités client à venir).
+**Fonctionnalités prévues (Rendu Final)** :
+- `CREATE` : Créer une nouvelle tâche simple
+- `REMOVE` : Supprimer une tâche
+- `COMBINE` : Créer une tâche par combinaison
+
+**Communication** :
+- Utilise des tubes nommés (FIFO) pour communiquer avec le démon
+- Format binaire big-endian selon le protocole défini
+
+**Fonctions clés** :
+- `main()` : Point d'entrée, parse les arguments, envoie les requêtes
+- `handle_list_response()` : Affiche la réponse LIST
+- `handle_times_exitcodes_response()` : Affiche l'historique
+- `handle_output_response()` : Affiche stdout/stderr
 
 ---
 
@@ -208,9 +261,13 @@ erraid.c
       └── serialization.h → serialization.c
 
 tadmor.c
-  ├── protocol.h → (à implémenter)
+  ├── protocol.h → protocol.c
   ├── task_tree.h → task_tree.c
   └── serialization.h → serialization.c
+
+protocol.c
+  ├── serialization.h → serialization.c
+  └── task_tree.h → task_tree.c
 
 execution.c
   └── serialization.h → serialization.c
