@@ -136,7 +136,7 @@ typedef struct {
 } task_execution_memory_t;
 
 // Vérifie si une tâche doit être exécutée maintenant
-// (exécution uniquement à la seconde 0 ou 1 de chaque minute)
+// (exécution strictement à la seconde 0 de chaque minute, comme cron)
 static int should_execute_task_simple(const task_t *task) {
     if (!task) {
         return 0;
@@ -148,8 +148,8 @@ static int should_execute_task_simple(const task_t *task) {
     }
 
     // Exécution uniquement au début de la minute (comme cron)
-    // Accepter tm_sec == 0 ou 1 (pour le cas où on vérifie à la seconde 1)
-    if (tm_now.tm_sec > 1) {
+    // Exécution strictement à la seconde 0 de chaque minute
+    if (tm_now.tm_sec != 0) {
         return 0;
     }
 
@@ -188,13 +188,13 @@ static void* task_execution_thread(void *arg) {
         }
     }
     
-    // Vérifier immédiatement si on est à la seconde 0 ou 1
-    if (tm_start.tm_sec <= 1 && cached_tasks) {
+    // Vérifier immédiatement si on est à la seconde 0
+    if (tm_start.tm_sec == 0 && cached_tasks) {
         int start_minute_id = tm_start.tm_year * 525600 + tm_start.tm_mon * 43200 + 
                              tm_start.tm_mday * 1440 + tm_start.tm_hour * 60 + tm_start.tm_min;
         for (size_t i = 0; i < cached_count && !g_stop; ++i) {
             if (should_execute_task_simple(cached_tasks[i])) {
-                time_t exec_time = start_time - tm_start.tm_sec;
+                time_t exec_time = start_time;
                 execute_task_with_timestamp(run_dir, cached_tasks[i], exec_time);
                 if (last_executed_minute) {
                     last_executed_minute[i] = start_minute_id;
@@ -204,9 +204,17 @@ static void* task_execution_thread(void *arg) {
     }
     
     // Synchroniser sur la prochaine seconde 0 si nécessaire
+    // Utiliser nanosleep avec vérification de g_stop pour arrêt rapide
     int secs_to_wait = 60 - tm_start.tm_sec;
-    if (secs_to_wait > 1 && secs_to_wait < 60) {
-        sleep(secs_to_wait);
+    if (secs_to_wait > 0 && secs_to_wait < 60 && !g_stop) {
+        // Diviser le sleep en intervalles de 100ms pour vérifier g_stop fréquemment
+        int intervals = secs_to_wait * 10; // 10 intervalles de 100ms par seconde
+        for (int i = 0; i < intervals && !g_stop; i++) {
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 100000000; // 100ms
+            nanosleep(&ts, NULL);
+        }
     }
     
     int iteration = 0;
@@ -218,7 +226,8 @@ static void* task_execution_thread(void *arg) {
         localtime_r(&now, &tm_now);
         
         // Recharger les tâches périodiquement pour détecter les nouvelles tâches
-        if (iteration % 10 == 0) {
+        // Vérifier g_stop avant et après pour arrêt rapide
+        if (iteration % 10 == 0 && !g_stop) {
             if (cached_tasks) {
                 free_task_array(cached_tasks, cached_count);
                 free(last_executed_minute);
@@ -226,10 +235,16 @@ static void* task_execution_thread(void *arg) {
                 cached_count = 0;
                 last_executed_minute = NULL;
             }
-            if (load_all_tasks(run_dir, &cached_tasks, &cached_count) == 0) {
-                last_executed_minute = calloc(cached_count, sizeof(int));
-                for (size_t i = 0; i < cached_count; i++) {
-                    last_executed_minute[i] = -1;
+            // Vérifier g_stop avant load_all_tasks (qui peut prendre du temps)
+            if (!g_stop && load_all_tasks(run_dir, &cached_tasks, &cached_count) == 0) {
+                // Vérifier g_stop après load_all_tasks
+                if (!g_stop) {
+                    last_executed_minute = calloc(cached_count, sizeof(int));
+                    if (last_executed_minute) {
+                        for (size_t i = 0; i < cached_count; i++) {
+                            last_executed_minute[i] = -1;
+                        }
+                    }
                 }
             }
         }
@@ -247,11 +262,8 @@ static void* task_execution_thread(void *arg) {
                 }
                 
                 if (should_execute_task_simple(cached_tasks[i])) {
-                    // Calculer le timestamp d'exécution (arrondir à la seconde 0 si on est à la seconde 1)
+                    // Le timestamp d'exécution est exactement à la seconde 0
                     time_t exec_time = now;
-                    if (tm_now.tm_sec == 1) {
-                        exec_time = now - 1;
-                    }
                     
                     // Exécuter la tâche de manière asynchrone pour ne pas bloquer le thread
                     task_exec_params_t *params = malloc(sizeof(task_exec_params_t));
@@ -278,7 +290,14 @@ static void* task_execution_thread(void *arg) {
             }
         }
 
-        sleep(1);
+        // Utiliser nanosleep avec vérification périodique de g_stop pour arrêt rapide
+        // Diviser le sleep en 10 intervalles de 100ms pour réagir rapidement à g_stop
+        for (int i = 0; i < 10 && !g_stop; i++) {
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 100000000; // 100ms
+            nanosleep(&ts, NULL);
+        }
     }
     
     // Nettoyer
@@ -442,15 +461,19 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
             break;
         }
         resp->anstype = ANSTYPE_OK;
-        resp->u.output_ok.output = output ? output : calloc(1, 1); // Allouer au moins 1 octet si NULL
+        // Si le fichier est vide (len == 0), output peut être NULL, c'est correct
+        // Le client vérifie len == 0 avant d'afficher
+        resp->u.output_ok.output = output;
         resp->u.output_ok.len = len;
         resp->opcode_used = req->opcode; // OPCODE_STDOUT ou OPCODE_STDERR
         break;
     }
     case OPCODE_TERMINATE:
+        DEBUG_LOG("[DEBUG] Handling TERMINATE request\n");
         resp->anstype = ANSTYPE_OK;
         resp->opcode_used = OPCODE_TERMINATE;
         g_stop = 1;
+        DEBUG_LOG("[DEBUG] TERMINATE: g_stop set to 1, sending response\n");
         break;
     default:
         resp->anstype = ANSTYPE_ERROR;
@@ -458,9 +481,13 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
         break;
     }
 
+    DEBUG_LOG("[DEBUG] Sending response (opcode=%d, anstype=%d, reply_fd=%d)\n", 
+              req->opcode, resp->anstype, reply_fd);
     if (send_response(reply_fd, resp) < 0) {
+        DEBUG_LOG("[DEBUG] send_response failed: %s\n", strerror(errno));
         perror("send_response");
     } else {
+        DEBUG_LOG("[DEBUG] Response sent successfully, closing reply_fd\n");
         // Fermer le tube de réponse immédiatement après avoir envoyé la réponse
         // pour indiquer au client que la réponse est complète (EOF)
         // Pour un pipe nommé, les données sont déjà dans le buffer du kernel,
@@ -507,7 +534,6 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
 
         // Une requête client disponible
         if (ret > 0 && FD_ISSET(request_fd, &readfds)) {
-            DEBUG_LOG("[DEBUG] Client request detected\n");
             // Vérifier que le fd est toujours valide avant de lire
             if (request_fd < 0) {
                 DEBUG_LOG("[DEBUG] request_fd invalid, breaking\n");
@@ -526,8 +552,10 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
                         // Si on ne peut pas rouvrir, on ne peut pas répondre, donc on skip cette requête
                         continue;
                     }
-                    DEBUG_LOG("[DEBUG] Reopened reply pipe: fd=%d\n", reply_fd);
+                    DEBUG_LOG("[DEBUG] Processing client request (reply pipe reopened: fd=%d)\n", reply_fd);
                 }
+            } else {
+                DEBUG_LOG("[DEBUG] Processing client request\n");
             }
             
             handle_request(run_dir, request_fd, &reply_fd);
