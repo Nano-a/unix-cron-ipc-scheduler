@@ -243,17 +243,17 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 
 ---
 
-## 🎯 JALON 2 - 12 décembre 2025
+## 🎯 JALON 2 - 8 décembre 2025
 
 ### T2.1 - Architecture du protocole de communication
 - **Difficulté** : **\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 3h
-- **Date de début** : 22 novembre 2025, 14h00
-- **Deadline** : 24 novembre 2025, 18h00
+- **Date de début** : 27 novembre 2025, 18h00
+- **Deadline** : 27 novembre 2025, 18h00
 - **Branche Git** : `feature/protocol-architecture`
 - **Prérequis** : T1.3 (jalon 1 terminé)
-- **Responsable** : À assigner
+- **Responsable** : AJINOU Abderrahman
 - **Description** :
   - Définir les structures `request_t` et `response_t`
   - Définir tous les opcodes (LIST, CREATE, COMBINE, REMOVE, etc.)
@@ -268,11 +268,12 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Difficulté** : **\*\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 4h
-- **Date de début** : 24 novembre 2025, 18h00
-- **Deadline** : 26 novembre 2025, 18h00
+- **Date de début** : 27 novembre 2025, 23h00
+- **Deadline** : 29 novembre 2025, 18h00
 - **Branche Git** : `feature/named-pipes`
 - **Prérequis** : T2.1 (architecture protocole)
-- **Responsable** : À assigner
+- **Responsable** : Ahmed
+- **Justification** : Ahmed a travaillé sur les appels système de base au Jalon 1 (task_tree avec gestion fichiers/répertoires). Les tubes nommés (FIFO) sont un mécanisme système similaire, donc cohérent avec ses compétences. Cette tâche est la base de la communication, donc logique qu'elle soit faite tôt par quelqu'un qui maîtrise les appels système.
 - **Description** :
   - Implémenter `init_pipes` (création des FIFO avec mkfifo)
   - Implémenter `open_pipes` pour le démon (lecture request, écriture reply)
@@ -283,15 +284,16 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 
 ---
 
-### T2.4 - Module protocole (sérialisation messages)
+### T2.3 - Module protocole (sérialisation messages)
 - **Difficulté** : **\*\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 5h
-- **Date de début** : 26 novembre 2025, 18h00
-- **Deadline** : 28 novembre 2025, 18h00
+- **Date de début** : 29 novembre 2025, 18h00
+- **Deadline** : 1 décembre 2025, 18h00
 - **Branche Git** : `feature/protocol-serialization`
 - **Prérequis** : T2.1 (architecture protocole), T1.6 (sérialisation)
-- **Responsable** : À assigner
+- **Responsable** : Pitel
+- **Justification** : Pitel a implémenté toute la sérialisation au Jalon 1 (T1.5 et T1.6). Cette tâche réutilise directement ces compétences pour sérialiser les messages du protocole. C'est une continuité naturelle de son travail précédent.
 - **Description** :
   - Implémenter `send_request` (sérialisation de toutes les requêtes)
   - Implémenter `receive_request` (désérialisation)
@@ -302,15 +304,35 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 
 ---
 
+### T2.4 - Démon - Intégration requêtes dans la boucle
+- **Difficulté** : **\*\*\***
+- **Jalon** : Jalon 2
+- **Durée estimée** : 4h
+- **Date de début** : 1 décembre 2025, 18h00
+- **Deadline** : 2 décembre 2025, 18h00
+- **Branche Git** : `feature/request-handling`
+- **Prérequis** : T2.2 (tubes nommés), T2.3 (sérialisation), T1.11 (boucle principale)
+- **Responsable** : Ahmed
+- **Justification** : Ahmed a fait T2.2 (tubes nommés), donc il connaît déjà le mécanisme de communication. Cette tâche modifie `daemon_loop` et utilise `select()` pour gérer les requêtes de manière non-bloquante, ce qui nécessite une bonne compréhension des appels système. C'est une extension logique de son travail sur les tubes nommés.
+- **Description** :
+  - Modifier `daemon_loop` pour gérer les requêtes
+  - Utiliser `select()` pour gérer requêtes et exécution de manière non-bloquante
+  - Implémenter `handle_request` (orchestration de toutes les requêtes)
+  - Gérer les timeouts (1 seconde pour vérifier les tâches)
+- **Livrable** : Démon répondant aux requêtes client tout en exécutant les tâches
+
+---
+
 ### T2.5 - Client - Parsing des arguments
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 4h
-- **Date de début** : 28 novembre 2025, 18h00
-- **Deadline** : 30 novembre 2025, 18h00
+- **Date de début** : 2 décembre 2025, 18h00
+- **Deadline** : 3 décembre 2025, 18h00
 - **Branche Git** : `feature/client-parsing`
-- **Prérequis** : T2.4 (protocole sérialisation)
-- **Responsable** : À assigner
+- **Prérequis** : T2.3 (protocole sérialisation)
+- **Responsable** : Pitel
+- **Justification** : Pitel a fait T2.3 (sérialisation messages), donc il connaît le format des requêtes. Le parsing des arguments client doit construire ces requêtes, donc c'est une continuité logique. De plus, cette tâche est indépendante côté client et peut être faite en parallèle avec T2.4.
 - **Description** :
   - Implémenter le parsing avec `getopt`
   - Parser les options `-l`, `-x`, `-o`, `-e`, `-c`, `-s`, `-r`, `-q`
@@ -326,11 +348,12 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 5h
-- **Date de début** : 30 novembre 2025, 18h00
-- **Deadline** : 2 décembre 2025, 18h00
+- **Date de début** : 3 décembre 2025, 18h00
+- **Deadline** : 4 décembre 2025, 18h00
 - **Branche Git** : `feature/client-queries`
-- **Prérequis** : T2.5 (parsing arguments), T2.4 (protocole)
-- **Responsable** : À assigner
+- **Prérequis** : T2.5 (parsing arguments), T2.3 (protocole)
+- **Responsable** : Pitel
+- **Justification** : Pitel a fait T2.5 (parsing), donc il connaît déjà comment les arguments sont parsés. Cette tâche utilise ces arguments parsés pour envoyer les requêtes et formater les réponses. C'est une suite logique de son travail sur le client. Cela regroupe toutes les fonctionnalités client dans un même flux de travail.
 - **Description** :
   - Implémenter `cmd_list` (liste des tâches)
   - Implémenter `cmd_times_exitcodes` (historique)
@@ -345,11 +368,12 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 3h
-- **Date de début** : 28 novembre 2025, 18h00
-- **Deadline** : 30 novembre 2025, 18h00
+- **Date de début** : 4 décembre 2025, 18h00
+- **Deadline** : 5 décembre 2025, 18h00
 - **Branche Git** : `feature/daemon-list`
-- **Prérequis** : T2.4 (protocole), T1.7 (lecture arborescence)
-- **Responsable** : À assigner
+- **Prérequis** : T2.3 (protocole), T2.4 (intégration requêtes), T1.7 (lecture arborescence)
+- **Responsable** : Ahmed
+- **Justification** : Ahmed a fait T2.4 (intégration requêtes dans la boucle), donc il connaît déjà `handle_request` et le mécanisme de traitement. Cette tâche implémente une requête spécifique dans ce framework qu'il a mis en place. De plus, Ahmed a travaillé sur la lecture d'arborescence au Jalon 1 (T1.7), donc il maîtrise `load_task_from_dir` et `list_all_tasks`.
 - **Description** :
   - Implémenter traitement de `OPCODE_LIST` dans `handle_request`
   - Charger toutes les tâches depuis le disque avec `list_all_tasks`
@@ -364,11 +388,12 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 3h
-- **Date de début** : 1er décembre 2025, 18h00
-- **Deadline** : 3 décembre 2025, 18h00
+- **Date de début** : 5 décembre 2025, 18h00
+- **Deadline** : 6 décembre 2025, 18h00
 - **Branche Git** : `feature/daemon-times`
-- **Prérequis** : T2.4 (protocole), T1.12 (logs)
-- **Responsable** : À assigner
+- **Prérequis** : T2.3 (protocole), T2.4 (intégration requêtes), T1.12 (logs)
+- **Responsable** : AJINOU Abderrahman
+- **Justification** : AJINOU a fait T1.11 (boucle principale du démon) au Jalon 1, donc il connaît bien l'architecture du démon et l'orchestration des tâches. Cette tâche traite les logs d'exécution (times-exitcodes) qui sont directement liés à l'exécution des tâches qu'il a orchestrée. Cela lui permet d'avoir une vue d'ensemble du démon (architecture, logs, intégration) avant l'intégration finale (T2.10). C'est une extension naturelle de son travail sur le démon.
 - **Description** :
   - Implémenter `read_execution_logs` (lecture times-exitcodes)
   - Traitement de `OPCODE_TIMES_EXITCODES` dans `handle_request`
@@ -383,11 +408,12 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 3h
-- **Date de début** : 3 décembre 2025, 18h00
-- **Deadline** : 4 décembre 2025, 18h00
+- **Date de début** : 6 décembre 2025, 18h00
+- **Deadline** : 7 décembre 2025, 18h00
 - **Branche Git** : `feature/daemon-outputs`
-- **Prérequis** : T2.4 (protocole), T1.12 (logs)
-- **Responsable** : À assigner
+- **Prérequis** : T2.3 (protocole), T2.4 (intégration requêtes), T1.12 (logs)
+- **Responsable** : AJINOU Abderrahman
+- **Justification** : AJINOU a fait T1.9 (exécution commandes simples) et T1.11 (boucle principale) au Jalon 1, donc il connaît bien comment les sorties stdout/stderr sont capturées et sauvegardées lors de l'exécution. Cette tâche lit ces fichiers sauvegardés pour les renvoyer au client, ce qui est cohérent avec son travail précédent sur l'exécution. Cela complète sa série de tâches sur le démon (T2.1 architecture, T2.8 logs, T2.9 sorties, T2.10 intégration) et lui donne une vue complète avant l'intégration finale.
 - **Description** :
   - Implémenter `read_stdout` et `read_stderr`
   - Traitement de `OPCODE_STDOUT` et `OPCODE_STDERR`
@@ -398,34 +424,15 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 
 ---
 
-### T2.10 - Démon - Intégration requêtes dans la boucle
-- **Difficulté** : **\*\*\***
-- **Jalon** : Jalon 2
-- **Durée estimée** : 4h
-- **Date de début** : 26 novembre 2025, 18h00
-- **Deadline** : 28 novembre 2025, 18h00
-- **Branche Git** : `feature/request-handling`
-- **Prérequis** : T2.2 (tubes nommés), T1.11 (boucle principale)
-- **Responsable** : À assigner
-- **Description** :
-  - Modifier `daemon_loop` pour gérer les requêtes
-  - Utiliser `select()` pour gérer requêtes et exécution de manière non-bloquante
-  - Implémenter `handle_request` (orchestration de toutes les requêtes)
-  - Gérer les timeouts (1 seconde pour vérifier les tâches)
-- **Livrable** : Démon répondant aux requêtes client tout en exécutant les tâches
-
----
-
-### T2.3 - Intégration et tests du jalon 2
+### T2.10 - Intégration et tests du jalon 2
 - **Difficulté** : **\*\***
 - **Jalon** : Jalon 2
 - **Durée estimée** : 5h
-- **Date de début** : 4 décembre 2025, 18h00
-- **Deadline** : 11 décembre 2025, 18h00
+- **Date de début** : 6 décembre 2025, 18h00
+- **Deadline** : 8 décembre 2025, 18h00
 - **Branche Git** : `integration/jalon-2`
 - **Prérequis** : T2.6 (client consultatif), T2.7, T2.8, T2.9 (toutes requêtes démon)
-- **Responsable** : À assigner
-- **Description** :
+- **Responsable** : AJINOU Abderrahman
   - Tests de toutes les requêtes consultatives
   - Tests de communication client-serveur
   - Tests avec plusieurs clients (séquentiels)
@@ -437,231 +444,127 @@ Ce fichier contient toutes les tâches du projet organisées chronologiquement, 
 
 ## 🎯 RENDU FINAL - 10 janvier 2026
 
-### T3.1 - Requêtes de modification (CREATE, REMOVE, COMBINE)
-- **Difficulté** : **\*\*\***
-- **Jalon** : Rendu final
-- **Durée estimée** : 6h
-- **Date de début** : 12 décembre 2025, 14h00
-- **Deadline** : 15 décembre 2025, 18h00
-- **Branche Git** : `feature/daemon-modify`
-- **Prérequis** : T2.3 (jalon 2 terminé), T1.8 (écriture arborescence)
-- **Responsable** : À assigner
-- **Description** :
-  - Implémenter traitement `OPCODE_CREATE` (création tâche simple)
-  - Implémenter traitement `OPCODE_REMOVE` (suppression tâche)
-  - Implémenter traitement `OPCODE_COMBINE` (combinaison tâches)
-  - Gestion des erreurs (tâche non trouvée, etc.)
-  - Génération d'IDs uniques
-- **Livrable** : Toutes les requêtes de modification fonctionnelles
-
----
-
-### T3.2 - Client - Commandes de modification
+### T3.1 - Module protocole - Support CREATE, REMOVE, COMBINE
 - **Difficulté** : **\*\***
-- **Jalon** : Rendu final
-- **Durée estimée** : 5h
-- **Date de début** : 15 décembre 2025, 18h00
-- **Deadline** : 17 décembre 2025, 18h00
-- **Branche Git** : `feature/client-modify`
-- **Prérequis** : T3.1 (requêtes modification), T2.5 (parsing)
-- **Responsable** : À assigner
-- **Description** :
-  - Implémenter `cmd_create` (création de tâche)
-  - Implémenter `cmd_remove` (suppression)
-  - Implémenter `cmd_combine` (combinaison)
-  - Implémenter `cmd_terminate` (arrêt du démon)
-  - Parser les timings pour CREATE et COMBINE
-- **Livrable** : Toutes les commandes client fonctionnelles
-
----
-
-### T3.3 - Gestion de la persistance et reprise
-- **Difficulté** : **\*\***
-- **Jalon** : Rendu final
+- **Jalon** : Rendu Final
 - **Durée estimée** : 4h
-- **Date de début** : 17 décembre 2025, 18h00
-- **Deadline** : 19 décembre 2025, 18h00
-- **Branche Git** : `feature/persistence`
-- **Prérequis** : T3.1 (requêtes modification), T1.7 (lecture)
-- **Responsable** : À assigner
+- **Date de début** : 19 décembre 2025, 14h00
+- **Deadline** : 20 décembre 2025, 18h00
+- **Branche Git** : `feature/protocol-rendu-final`
+- **Prérequis** : T2.3 (protocole sérialisation), T2.10 (jalon 2 terminé)
+- **Responsable** : AJINOU Abderrahman
 - **Description** :
-  - Vérifier que le démon peut reprendre après redémarrage
-  - Tests de persistance des données
-  - Gestion des IDs uniques (non réutilisation après suppression)
-  - Implémenter `generate_task_id` correctement
-- **Livrable** : Système de persistance robuste
+  - Modifier `send_request()` pour supporter `OPCODE_CREATE` et `OPCODE_COMBINE`
+  - Modifier `receive_request()` pour désérialiser CREATE et COMBINE
+  - Modifier `send_response()` pour envoyer les réponses CREATE/REMOVE/COMBINE
+  - Modifier `receive_response()` pour lire les réponses CREATE/REMOVE/COMBINE
+  - Modifier `free_request()` pour libérer la mémoire de CREATE (argv) et COMBINE (taskids)
+  - Gestion des erreurs et validation des données
+- **Livrable** : `protocol.c` avec support complet de CREATE, REMOVE, COMBINE
 
 ---
 
-### T3.5 - Gestion des tâches abstraites
-- **Difficulté** : **\***
-- **Jalon** : Rendu final
-- **Durée estimée** : 3h
-- **Date de début** : 15 décembre 2025, 18h00
-- **Deadline** : 16 décembre 2025, 18h00
-- **Branche Git** : `feature/abstract-tasks`
-- **Prérequis** : T3.2 (client modification), T1.11 (planification)
-- **Responsable** : À assigner
-- **Description** :
-  - Support de l'option `-n` (pas de timing)
-  - Tâches sans horaire d'exécution (timing tous à 0)
-  - Utilisation dans les combinaisons
-  - Vérifier que les tâches abstraites ne s'exécutent pas automatiquement
-- **Livrable** : Tâches abstraites fonctionnelles
-
----
-
-### T3.6 - Formatage et affichage avancé
-- **Difficulté** : **\*\***
-- **Jalon** : Rendu final
-- **Durée estimée** : 4h
-- **Date de début** : 16 décembre 2025, 18h00
-- **Deadline** : 18 décembre 2025, 18h00
-- **Branche Git** : `feature/formatting`
-- **Prérequis** : T3.2 (client modification)
-- **Responsable** : À assigner
-- **Description** :
-  - Implémenter `format_timing_display` (affichage timing lisible)
-  - Implémenter `format_command_line` (affichage commandes)
-  - Formatage des séquences : `(cmd1; cmd2; cmd3)`
-  - Formatage timing : `* * *` ou `0,30 * *` ou `- - -`
-- **Livrable** : Affichage professionnel et lisible
-
----
-
-### T3.7 - Gestion des erreurs et robustesse
+### T3.2 - Module task_tree - Génération ID, suppression et combinaison
 - **Difficulté** : **\*\*\***
-- **Jalon** : Rendu final
+- **Jalon** : Rendu Final
 - **Durée estimée** : 5h
-- **Date de début** : 2 janvier 2026, 14h00
-- **Deadline** : 4 janvier 2026, 18h00
-- **Branche Git** : `feature/error-handling`
-- **Prérequis** : T3.2 (toutes fonctionnalités)
-- **Responsable** : À assigner
-- **Description** :
-  - Gestion complète des erreurs système
-  - Messages d'erreur explicites pour l'utilisateur
-  - Gestion de la mémoire (pas de fuites, vérification avec valgrind)
-  - Validation des entrées utilisateur
-  - Gestion des cas limites
-- **Livrable** : Code robuste et sécurisé
-
----
-
-### T3.8 - Tests exhaustifs
-- **Difficulté** : **\*\***
-- **Jalon** : Rendu final
-- **Durée estimée** : 6h
-- **Date de début** : 19 décembre 2025, 18h00
+- **Date de début** : 20 décembre 2025, 18h00
 - **Deadline** : 22 décembre 2025, 18h00
-- **Branche Git** : `feature/comprehensive-tests`
-- **Prérequis** : T3.2 (toutes fonctionnalités)
-- **Responsable** : À assigner
+- **Branche Git** : `feature/task-tree-rendu-final`
+- **Prérequis** : T3.1 (protocole CREATE/REMOVE/COMBINE), T1.7 (lecture arborescence), T1.8 (écriture arborescence)
+- **Responsable** : Ahmed Mouncef Chabira
 - **Description** :
-  - Tests unitaires pour chaque module
-  - Tests d'intégration complets
-  - Tests avec les exemples fournis
-  - Tests de cas limites et d'erreurs
-  - Tests de performance
-- **Livrable** : Suite de tests complète
+  - Implémenter `generate_task_id()` : parcourt le répertoire tasks/ pour trouver le max_id et retourne max_id + 1
+  - Implémenter `remove_task()` : vérifie l'existence avec `stat()`, supprime récursivement avec `system("rm -rf")`, vérifie la suppression
+  - Implémenter `combine_tasks()` : vérifie que toutes les tâches existent, génère un nouvel ID, crée la structure de la tâche combinée, copie les arborescences cmd/ de chaque tâche, supprime les tâches combinées (consommation)
+  - Gestion des erreurs (ENOENT si tâche inexistante, EIO si erreur système)
+- **Livrable** : `task_tree.c` avec `generate_task_id()`, `remove_task()`, `combine_tasks()` fonctionnelles
 
 ---
 
-### T3.9 - Optimisations et nettoyage
+### T3.3 - Démon - Traitement requêtes CREATE, REMOVE, COMBINE
 - **Difficulté** : **\*\*\***
-- **Jalon** : Rendu final
+- **Jalon** : Rendu Final
 - **Durée estimée** : 4h
-- **Date de début** : 4 janvier 2026, 18h00
-- **Deadline** : 6 janvier 2026, 18h00
-- **Branche Git** : `feature/optimization`
-- **Prérequis** : T3.8 (tests)
-- **Responsable** : À assigner
+- **Date de début** : 22 décembre 2025, 18h00
+- **Deadline** : 23 décembre 2025, 18h00
+- **Branche Git** : `feature/daemon-rendu-final`
+- **Prérequis** : T3.2 (task_tree fonctions), T3.1 (protocole), T2.4 (intégration requêtes)
+- **Responsable** : Jeremy Pitel
 - **Description** :
-  - Optimisation de la gestion mémoire
-  - Nettoyage du code (commentaires, style uniforme)
-  - Vérification des warnings de compilation
-  - Optimisation des performances si nécessaire
-  - Refactoring si besoin
-- **Livrable** : Code propre et optimisé
+  - Ajouter traitement de `OPCODE_CREATE` dans `handle_request()` : créer commande simple, générer ID, sauvegarder tâche
+  - Ajouter traitement de `OPCODE_REMOVE` dans `handle_request()` : appeler `remove_task()`, gérer erreur NOT_FOUND
+  - Ajouter traitement de `OPCODE_COMBINE` dans `handle_request()` : appeler `combine_tasks()`, gérer erreur NOT_FOUND
+  - Ajouter option `-p` dans `main()` pour spécifier le répertoire des pipes (défaut: `<run_dir>/pipes`)
+  - Modifier `init_pipes()` et `open_pipes_daemon()` pour utiliser le répertoire personnalisé
+  - Gestion des erreurs et logs de debug
+- **Livrable** : `erraid.c` avec traitement complet de CREATE, REMOVE, COMBINE et option `-p`
 
 ---
 
-### T3.10 - Gestion Git et branches
-- **Difficulté** : **\***
-- **Jalon** : Rendu final
-- **Durée estimée** : 2h
-- **Date de début** : 6 janvier 2026, 18h00
-- **Deadline** : 7 janvier 2026, 18h00
-- **Branche Git** : `feature/git-cleanup`
-- **Prérequis** : T3.9 (optimisations)
-- **Responsable** : À assigner
-- **Description** :
-  - Nettoyage de l'historique Git
-  - Vérification que toutes les branches sont mergées
-  - Messages de commit clairs et cohérents
-  - Préparation pour les merges finaux
-- **Livrable** : Historique Git propre
-
----
-
-### T3.4 - Documentation et livrables finaux
-- **Difficulté** : **\***
-- **Jalon** : Rendu final
-- **Durée estimée** : 6h
-- **Date de début** : 2 janvier 2026, 14h00
-- **Deadline** : 5 janvier 2026, 18h00
-- **Branche Git** : `feature/documentation`
-- **Prérequis** : T3.2 (toutes fonctionnalités)
-- **Responsable** : À assigner
-- **Description** :
-  - Rédiger `README.md` complet avec exemples
-  - Rédiger `ARCHITECTURE.md` détaillé
-  - Créer `AUTHORS.md` avec liste des membres
-  - Vérifier le Makefile (make, make clean, make distclean)
-  - Documentation du code (commentaires)
-- **Livrable** : Documentation complète
-
----
-
-### Intégration finale
+### T3.4 - Client - Parsing CREATE, REMOVE, COMBINE
 - **Difficulté** : **\*\*\***
-- **Jalon** : Rendu final
-- **Durée estimée** : 8h
-- **Date de début** : 7 janvier 2026, 18h00
-- **Deadline** : 9 janvier 2026, 18h00
-- **Branche Git** : `integration/rendu-final`
-- **Prérequis** : Toutes les tâches précédentes
-- **Responsable** : À assigner
+- **Jalon** : Rendu Final
+- **Durée estimée** : 3h
+- **Date de début** : 23 décembre 2025, 18h00
+- **Deadline** : 24 décembre 2025, 18h00
+- **Branche Git** : `feature/client-parsing-rendu-final`
+- **Prérequis** : T3.3 (démon CREATE/REMOVE/COMBINE), T2.5 (parsing arguments)
+- **Responsable** : Ahmed Mouncef Chabira
 - **Description** :
-  - Intégration de tous les modules
-  - Tests finaux complets
-  - Vérification sur lulu
-  - Corrections de derniers bugs
-  - Création du tag `rendu-final`
-- **Livrable** : Projet complet et fonctionnel, tag `rendu-final` créé
+  - Corriger `parse_list()` pour gérer `"*"` correctement : `(1ULL << (max_value + 1)) - 1` au lieu de `(1ULL << max_value) - 1`
+  - Ajouter parsing de `-c` (CREATE) avec options `-m`, `-H`, `-d`, `-n` (abstraite)
+  - Ajouter parsing de `-r` (REMOVE) avec taskid
+  - Ajouter parsing de `-s` (COMBINE) : modifier `optstr` de `"s:"` à `"s"`, parser les taskids après `getopt()`, gérer `-p` s'il apparaît
+  - Construire requête CREATE avec timing et arguments
+  - Construire requête COMBINE avec timing, type "SQ", et taskids
+  - Gestion des erreurs de parsing (format invalide, commande manquante)
+- **Livrable** : `tadmor.c` avec parsing complet de CREATE, REMOVE, COMBINE
 
 ---
 
-## 📊 Légende
+### T3.5 - Client - Gestion des réponses CREATE, REMOVE, COMBINE
+- **Difficulté** : **\*\***
+- **Jalon** : Rendu Final
+- **Durée estimée** : 3h
+- **Date de début** : 24 décembre 2025, 18h00
+- **Deadline** : 25 décembre 2025, 18h00
+- **Branche Git** : `feature/client-responses-rendu-final`
+- **Prérequis** : T3.4 (parsing CREATE/REMOVE/COMBINE), T2.6 (requêtes consultatives)
+- **Responsable** : Jeremy Pitel
+- **Description** :
+  - Ajouter gestion des réponses CREATE/REMOVE/COMBINE dans le switch de traitement des réponses
+  - Afficher le taskid pour CREATE/COMBINE (succès)
+  - Succès silencieux pour REMOVE (pas de sortie)
+  - Gestion des erreurs : afficher "ERROR: NOT_FOUND" si nécessaire
+  - Formatage correct de l'affichage
+  - Tests avec le démon
+- **Livrable** : `tadmor.c` avec gestion complète des réponses CREATE, REMOVE, COMBINE
 
-- **Prérequis** : Tâches qui doivent être terminées avant de commencer celle-ci
-- **Durée estimée** : Temps de développement prévu (peut varier selon l'expérience)
-- **Deadline** : Date limite pour terminer la tâche
-- **Branche Git** : Nom de la branche à créer pour cette tâche
+---
 
-## 🔄 Workflow recommandé
+### T3.6 - Intégration et tests du rendu final
 
-1. Choisir une tâche disponible (vérifier les prérequis)
-2. Créer la branche Git correspondante
-3. Développer et commiter régulièrement
-4. Demander un merge via Pull Request
-5. Le chef de projet review et merge
-6. Passer à la tâche suivante
+---
 
-## ⚠️ Notes importantes
-
-- Les durées sont des estimations, ajustez selon votre rythme
-- Si une tâche prend plus de temps, communiquez avec l'équipe
-- Les prérequis sont importants : ne pas commencer une tâche si ses prérequis ne sont pas terminés
-- Tester régulièrement votre code avant de demander un merge
-
+### T3.6 - Intégration et tests du rendu final
+- **Difficulté** : **\*\***
+- **Jalon** : Rendu Final
+- **Durée estimée** : 6h
+- **Date de début** : 25 décembre 2025, 18h00
+- **Deadline** : 10 janvier 2026, 12h00
+- **Branche Git** : `integration/rendu-final`
+- **Prérequis** : T3.5 (gestion réponses client), T3.3 (démon CREATE/REMOVE/COMBINE)
+- **Responsable** : AJINOU Abderrahman
+- **Description** :
+  - Tests d'intégration de toutes les fonctionnalités du rendu final
+  - Tests CREATE (simple, avec timings, abstraite, formats "*" et "-")
+  - Tests REMOVE (tâche existante, tâche inexistante avec erreur NOT_FOUND)
+  - Tests COMBINE (2 tâches, plusieurs tâches, avec timing, abstraite, tâches inexistantes)
+  - Tests option `-p` pour le démon
+  - Tests de persistance (reprise après arrêt du démon)
+  - Tests de consultation (TIMES_EXITCODES, STDOUT, STDERR) pour vérifier qu'ils fonctionnent toujours
+  - Vérification compilation sans erreurs ni warnings
+  - Corrections de bugs
+  - Documentation des tests dans `RESULTATS_TESTS.md`
+- **Livrable** : Projet fonctionnel pour rendu final, tag `rendu-final` créé, tous les tests passent
