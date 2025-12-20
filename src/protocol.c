@@ -247,6 +247,24 @@ int send_request(int fd, const request_t *req) {
     case OPCODE_STDERR:
         return write_taskid(fd, req->u.query.taskid);
 
+    case OPCODE_REMOVE:
+        return write_taskid(fd, req->u.query.taskid);
+
+    case OPCODE_CREATE: {
+        if (write_timing(fd, &req->u.create.timing) < 0) return -1;
+        return write_arguments(fd, req->u.create.argc, req->u.create.argv);
+    }
+
+    case OPCODE_COMBINE: {
+        if (write_timing(fd, &req->u.combine.timing) < 0) return -1;
+        if (write_uint16(fd, req->u.combine.type) < 0) return -1;
+        if (write_uint32(fd, req->u.combine.nbtasks) < 0) return -1;
+        for (uint32_t i = 0; i < req->u.combine.nbtasks; ++i) {
+            if (write_taskid(fd, req->u.combine.taskids[i]) < 0) return -1;
+        }
+        return 0;
+    }
+
     case OPCODE_LIST:
     case OPCODE_TERMINATE:
         return 0;
@@ -272,6 +290,38 @@ int receive_request(int fd, request_t **req_out) {
         if (read_taskid(fd, &req->u.query.taskid) < 0) goto fail;
         *req_out = req;
         return 0;
+
+    case OPCODE_REMOVE:
+        if (read_taskid(fd, &req->u.query.taskid) < 0) goto fail;
+        *req_out = req;
+        return 0;
+
+    case OPCODE_CREATE: {
+        if (read_timing(fd, &req->u.create.timing) < 0) goto fail;
+        if (read_arguments(fd, &req->u.create.argc, &req->u.create.argv) < 0) goto fail;
+        *req_out = req;
+        return 0;
+    }
+
+    case OPCODE_COMBINE: {
+        if (read_timing(fd, &req->u.combine.timing) < 0) goto fail;
+        if (read_uint16(fd, &req->u.combine.type) < 0) goto fail;
+        if (read_uint32(fd, &req->u.combine.nbtasks) < 0) goto fail;
+        if (req->u.combine.nbtasks == 0 || req->u.combine.nbtasks > 100) {
+            errno = EPROTO;
+            goto fail;
+        }
+        req->u.combine.taskids = calloc(req->u.combine.nbtasks, sizeof(uint64_t));
+        if (!req->u.combine.taskids) goto fail;
+        for (uint32_t i = 0; i < req->u.combine.nbtasks; ++i) {
+            if (read_taskid(fd, &req->u.combine.taskids[i]) < 0) {
+                free(req->u.combine.taskids);
+                goto fail;
+            }
+        }
+        *req_out = req;
+        return 0;
+    }
 
     case OPCODE_LIST:
     case OPCODE_TERMINATE:
@@ -327,6 +377,13 @@ int send_response(int fd, const response_t *resp) {
             if (local_robust_write(fd, resp->u.output_ok.output, resp->u.output_ok.len) != (ssize_t)resp->u.output_ok.len)
                 return -1;
         }
+        return 0;
+    } else if (resp->opcode_used == OPCODE_CREATE || resp->opcode_used == OPCODE_COMBINE) {
+        // CREATE/COMBINE : envoyer le taskid
+        if (write_taskid(fd, resp->u.create_ok.taskid) < 0) return -1;
+        return 0;
+    } else if (resp->opcode_used == OPCODE_REMOVE) {
+        // REMOVE : pas de données supplémentaires
         return 0;
     } else if (resp->opcode_used == OPCODE_TERMINATE) {
         // TERMINATE : pas de données supplémentaires
@@ -548,7 +605,23 @@ int receive_response(int fd, response_t **resp_out, uint16_t opcode) {
     }
 
     // ANSTYPE_OK : utiliser l'opcode pour déterminer le type de réponse
-    if (opcode == OPCODE_TERMINATE) {
+    if (opcode == OPCODE_CREATE || opcode == OPCODE_COMBINE) {
+        // CREATE/COMBINE : lire le taskid
+        uint64_t taskid;
+        if (read_taskid(fd, &taskid) < 0) {
+            errno = EPROTO;
+            goto fail;
+        }
+        resp->u.create_ok.taskid = taskid;
+        resp->opcode_used = opcode;
+        *resp_out = resp;
+        return 0;
+    } else if (opcode == OPCODE_REMOVE) {
+        // REMOVE : pas de données supplémentaires
+        resp->opcode_used = opcode;
+        *resp_out = resp;
+        return 0;
+    } else if (opcode == OPCODE_TERMINATE) {
         // TERMINATE : pas de données supplémentaires
         resp->opcode_used = opcode;
         *resp_out = resp;
@@ -679,9 +752,23 @@ fail:
 
 //free
 void free_request(request_t *req) {
-    // Pour les jalons 1 et 2, aucune allocation à libérer
-    // (les requêtes consultatives n'allouent pas de mémoire)
-    (void)req;
+    if (!req) return;
+    
+    if (req->opcode == OPCODE_CREATE) {
+        // Libérer argv
+        if (req->u.create.argv) {
+            for (uint32_t i = 0; i < req->u.create.argc; ++i) {
+                free(req->u.create.argv[i]);
+            }
+            free(req->u.create.argv);
+        }
+    } else if (req->opcode == OPCODE_COMBINE) {
+        // Libérer taskids
+        if (req->u.combine.taskids) {
+            free(req->u.combine.taskids);
+        }
+    }
+    
     free(req);
 }
 
