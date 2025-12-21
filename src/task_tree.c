@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+
 #include "task_tree.h"
 #include <stdio.h>
 #include <string.h>
@@ -642,4 +643,243 @@ int read_stdout(const char *run_dir, uint64_t taskid, char **output_out, size_t 
 
 int read_stderr(const char *run_dir, uint64_t taskid, char **output_out, size_t *len_out) {
     return read_stream_file(run_dir, taskid, "stderr", output_out, len_out);
+}
+
+// Helper pour vérifier si une chaîne est un nombre
+static int is_number(const char *name) {
+    if (!name || *name == '\0') {
+        return 0;
+    }
+    for (const char *p = name; *p; ++p) {
+        if (!isdigit((unsigned char)*p)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+// Génère un ID unique pour une nouvelle tâche
+uint64_t generate_task_id(const char *run_dir) {
+    char tasks_dir[MAX_PATH_LEN];
+    int len = snprintf(tasks_dir, sizeof(tasks_dir), "%s/tasks", run_dir);
+    if (len < 0 || len >= (int)sizeof(tasks_dir)) {
+        return 0;
+    }
+
+    DIR *dir = opendir(tasks_dir);
+    if (!dir) {
+        // Si le répertoire n'existe pas, retourner 0 comme premier ID
+        return 0;
+    }
+
+    uint64_t max_id = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        if (!is_number(entry->d_name)) {
+            continue;
+        }
+        uint64_t taskid = strtoull(entry->d_name, NULL, 10);
+        if (taskid > max_id) {
+            max_id = taskid;
+        }
+    }
+    closedir(dir);
+
+    // Retourner max_id + 1 (les IDs supprimés ne sont pas réutilisés)
+    return max_id + 1;
+}
+
+// Supprime une tâche et tous ses fichiers
+int remove_task(const char *run_dir, uint64_t taskid) {
+    char task_dir[MAX_PATH_LEN];
+    if (build_task_dir_path(task_dir, sizeof(task_dir), run_dir, taskid) < 0) {
+        return -1;
+    }
+
+    // Vérifier que la tâche existe avant de la supprimer
+    struct stat st;
+    if (stat(task_dir, &st) < 0) {
+        // La tâche n'existe pas
+        errno = ENOENT;
+        return -1;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        // Ce n'est pas un répertoire
+        errno = ENOENT;
+        return -1;
+    }
+
+    // Supprimer récursivement le répertoire de la tâche
+    char cmd[1024];
+    int len = snprintf(cmd, sizeof(cmd), "rm -rf %s", task_dir);
+    if (len < 0 || len >= (int)sizeof(cmd)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    
+    int ret = system(cmd);
+    if (ret != 0) {
+        errno = EIO;
+        return -1;
+    }
+    
+    // Vérifier que la suppression a réussi
+    if (stat(task_dir, &st) == 0) {
+        // Le répertoire existe encore, la suppression a échoué
+        errno = EIO;
+        return -1;
+    }
+    
+    return 0;
+}
+
+// Combine plusieurs tâches en une nouvelle tâche
+int combine_tasks(const char *run_dir, const uint64_t *taskids, uint32_t nbtasks, uint16_t combine_type, const timing_t *timing, uint64_t *new_taskid_out) {
+    if (!run_dir || !taskids || nbtasks == 0 || !timing || !new_taskid_out) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    // Vérifier que toutes les tâches existent
+    for (uint32_t i = 0; i < nbtasks; i++) {
+        char path[MAX_PATH_LEN];
+        struct stat st;
+        if (build_task_dir_path(path, sizeof(path), run_dir, taskids[i]) < 0 ||
+            stat(path, &st) < 0 || !S_ISDIR(st.st_mode)) {
+            errno = ENOENT;
+            return -1;
+        }
+    }
+
+    // Générer un nouvel ID
+    uint64_t new_taskid = generate_task_id(run_dir);
+    *new_taskid_out = new_taskid;
+
+    // Créer le répertoire de la nouvelle tâche
+    char new_task_dir[MAX_PATH_LEN];
+    if (build_task_dir_path(new_task_dir, sizeof(new_task_dir), run_dir, new_taskid) < 0) {
+        return -1;
+    }
+    if (ensure_directory_exists(new_task_dir) < 0) {
+        return -1;
+    }
+
+    // Sauvegarder le timing
+    char timing_path[MAX_PATH_LEN];
+    if (build_task_path(timing_path, sizeof(timing_path), run_dir, new_taskid, TASK_TIMING_FILENAME) < 0) {
+        return -1;
+    }
+    int fd = open(timing_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        return -1;
+    }
+    if (write_timing(fd, timing) < 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    if (close(fd) < 0) {
+        return -1;
+    }
+
+    // Créer le répertoire cmd
+    char cmd_dir[MAX_PATH_LEN];
+    int len = snprintf(cmd_dir, sizeof(cmd_dir), "%s/%s", new_task_dir, TASK_CMD_DIRNAME);
+    if (len < 0 || len >= (int)sizeof(cmd_dir)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    if (ensure_directory_exists(cmd_dir) < 0) {
+        return -1;
+    }
+
+    // Écrire le type de combinaison
+    char type_path[MAX_PATH_LEN];
+    len = snprintf(type_path, sizeof(type_path), "%s/type", cmd_dir);
+    if (len < 0 || len >= (int)sizeof(type_path)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    fd = open(type_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        return -1;
+    }
+    if (write_uint16(fd, combine_type) < 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    close(fd);
+
+    // Écrire le nombre de sous-commandes
+    char nbcmds_path[MAX_PATH_LEN];
+    len = snprintf(nbcmds_path, sizeof(nbcmds_path), "%s/nbcmds", cmd_dir);
+    if (len < 0 || len >= (int)sizeof(nbcmds_path)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    fd = open(nbcmds_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        return -1;
+    }
+    if (write_uint32(fd, nbtasks) < 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    close(fd);
+
+    // Copier les arborescences cmd de chaque tâche
+    for (uint32_t i = 0; i < nbtasks; i++) {
+        char src_cmd_dir[MAX_PATH_LEN];
+        char dst_cmd_dir[MAX_PATH_LEN];
+        
+        // Chemin source : run_dir/tasks/taskid/cmd
+        if (build_task_dir_path(src_cmd_dir, sizeof(src_cmd_dir), run_dir, taskids[i]) < 0) {
+            return -1;
+        }
+        len = snprintf(src_cmd_dir + strlen(src_cmd_dir), 
+                       sizeof(src_cmd_dir) - strlen(src_cmd_dir), "/%s", TASK_CMD_DIRNAME);
+        if (len < 0 || len >= (int)(sizeof(src_cmd_dir) - strlen(src_cmd_dir))) {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+
+        // Chemin destination : new_task_dir/cmd/i
+        len = snprintf(dst_cmd_dir, sizeof(dst_cmd_dir), "%s/%lu", cmd_dir, (unsigned long)i);
+        if (len < 0 || len >= (int)sizeof(dst_cmd_dir)) {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+
+        // Copier récursivement avec cp -r
+        char cp_cmd[2048];
+        len = snprintf(cp_cmd, sizeof(cp_cmd), "cp -r %s %s", src_cmd_dir, dst_cmd_dir);
+        if (len < 0 || len >= (int)sizeof(cp_cmd)) {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        if (system(cp_cmd) != 0) {
+            errno = EIO;
+            return -1;
+        }
+    }
+
+    // Supprimer les tâches combinées (consommation)
+    for (uint32_t i = 0; i < nbtasks; i++) {
+        if (remove_task(run_dir, taskids[i]) < 0) {
+            // La suppression a échoué, retourner une erreur
+            // (on ne peut pas continuer avec des tâches partiellement supprimées)
+            errno = EIO;
+            return -1;
+        }
+    }
+
+    return 0;
 }
