@@ -468,13 +468,85 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
         resp->opcode_used = req->opcode; // OPCODE_STDOUT ou OPCODE_STDERR
         break;
     }
-    case OPCODE_TERMINATE:
+    case OPCODE_TERMINATE: {
         DEBUG_LOG("[DEBUG] Handling TERMINATE request\n");
         resp->anstype = ANSTYPE_OK;
         resp->opcode_used = OPCODE_TERMINATE;
         g_stop = 1;
         DEBUG_LOG("[DEBUG] TERMINATE: g_stop set to 1, sending response\n");
         break;
+    }
+    case OPCODE_CREATE: {
+        DEBUG_LOG("[DEBUG] handle_request: processing CREATE request\n");
+        // Créer une commande simple à partir des arguments
+        command_t *cmd = create_simple_command("SI", req->u.create.argc, req->u.create.argv);
+        if (!cmd) {
+            DEBUG_LOG("[DEBUG] handle_request: CREATE failed to create command: %s\n", strerror(errno));
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        // Générer un ID unique
+        uint64_t new_taskid = generate_task_id(run_dir);
+        // Créer la tâche
+        task_t *task = calloc(1, sizeof(task_t));
+        if (!task) {
+            free_command(cmd);
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        task->taskid = new_taskid;
+        task->timing = req->u.create.timing;
+        task->cmd = cmd;
+        // Sauvegarder la tâche
+        if (save_task_to_dir(run_dir, task) < 0) {
+            DEBUG_LOG("[DEBUG] handle_request: CREATE failed to save task: %s\n", strerror(errno));
+            free_task(task);
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        DEBUG_LOG("[DEBUG] handle_request: CREATE created task %lu\n", new_taskid);
+        resp->anstype = ANSTYPE_OK;
+        resp->u.create_ok.taskid = new_taskid;
+        resp->opcode_used = OPCODE_CREATE;
+        free_task(task); // La tâche est sauvegardée, on peut libérer
+        break;
+    }
+    case OPCODE_REMOVE: {
+        DEBUG_LOG("[DEBUG] handle_request: processing REMOVE request for taskid=%lu\n", req->u.query.taskid);
+        if (remove_task(run_dir, req->u.query.taskid) < 0) {
+            DEBUG_LOG("[DEBUG] handle_request: REMOVE failed for task %lu: %s\n", 
+                      req->u.query.taskid, strerror(errno));
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        DEBUG_LOG("[DEBUG] handle_request: REMOVE removed task %lu\n", req->u.query.taskid);
+        resp->anstype = ANSTYPE_OK;
+        resp->opcode_used = OPCODE_REMOVE;
+        break;
+    }
+
+    case OPCODE_COMBINE: {
+    DEBUG_LOG("[DEBUG] handle_request: processing COMBINE request for %u tasks\n", req->u.combine.nbtasks);
+    uint64_t new_taskid;
+    if (combine_tasks(run_dir, req->u.combine.taskids, req->u.combine.nbtasks, 
+                     req->u.combine.type, &req->u.combine.timing, &new_taskid) < 0) {
+        DEBUG_LOG("[DEBUG] handle_request: COMBINE failed: %s\n", strerror(errno));
+        resp->anstype = ANSTYPE_ERROR;
+        resp->u.error.errcode = ERRCODE_NOT_FOUND;
+        break;
+    }
+    DEBUG_LOG("[DEBUG] handle_request: COMBINE created task %lu\n", new_taskid);
+    resp->anstype = ANSTYPE_OK;
+    resp->u.create_ok.taskid = new_taskid;
+    resp->opcode_used = OPCODE_COMBINE;
+    break;
+    }
+
+
     default:
         resp->anstype = ANSTYPE_ERROR;
         resp->u.error.errcode = ERRCODE_NOT_FOUND;
@@ -571,8 +643,9 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
 
 
 static void usage(const char *prog) {
-    fprintf(stderr, "Usage: %s [-r <run_dir>] [-d]\n", prog);
+    fprintf(stderr, "Usage: %s [-r <run_dir>] [-p <pipes_dir>] [-d]\n", prog);
     fprintf(stderr, "  -r <run_dir>  Répertoire d'exécution (défaut: /tmp/$USER/erraid)\n");
+    fprintf(stderr, "  -p <pipes_dir> Répertoire des pipes (défaut: <run_dir>/pipes)\n");
     fprintf(stderr, "  -d            Activer les logs de debug\n");
     fprintf(stderr, "  -h, --help    Afficher cette aide\n");
 }
@@ -584,6 +657,7 @@ int main(int argc, char **argv) {
     int opt;
     int request_fd = -1;
     int reply_fd = -1;
+    const char *pipes_dir_arg = NULL;
 
     // Vérifier --help et -h avant getopt
     for (int i = 1; i < argc; i++) {
@@ -593,7 +667,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    while ((opt = getopt(argc, argv, "r:hd")) != -1) {
+    while ((opt = getopt(argc, argv, "r:p:hd")) != -1) {
         switch (opt) {
         case 'r':
             run_dir = optarg;
@@ -604,6 +678,9 @@ int main(int argc, char **argv) {
         case 'h':
             usage(argv[0]);
             return EXIT_SUCCESS;
+        case 'p':
+            pipes_dir_arg = optarg;
+            break;
         default:
             usage(argv[0]);
             return EXIT_FAILURE;
@@ -625,9 +702,19 @@ int main(int argc, char **argv) {
         run_dir = default_run_dir;
     }
 
-    if (snprintf(pipes_dir, sizeof(pipes_dir), "%s/pipes", run_dir) < 0 || strlen(pipes_dir) >= sizeof(pipes_dir)) {
-        fprintf(stderr, "Erreur: chemin pipes trop long\n");
-        return EXIT_FAILURE;
+    // Si pipes_dir n'est pas fourni, utiliser <run_dir>/pipes par défaut
+    if (!pipes_dir_arg) {
+        int len = snprintf(pipes_dir, sizeof(pipes_dir), "%s/pipes", run_dir);
+        if (len < 0 || len >= (int)sizeof(pipes_dir)) {
+            fprintf(stderr, "Erreur: chemin pipes trop long\n");
+            return EXIT_FAILURE;
+        }
+    } else {
+        int len = snprintf(pipes_dir, sizeof(pipes_dir), "%s", pipes_dir_arg);
+        if (len < 0 || len >= (int)sizeof(pipes_dir)) {
+            fprintf(stderr, "Erreur: chemin pipes trop long\n");
+            return EXIT_FAILURE;
+        }
     }
 
     if (init_task_directory(run_dir) < 0) {
