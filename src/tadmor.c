@@ -41,6 +41,113 @@ static int parse_taskid(const char *s, uint64_t *out) {
     return 0;
 }
 
+// Parse une valeur unique ou une plage (ex: "5" ou "5-10")
+static int parse_value_or_range(const char *s, int *start_out, int *end_out) {
+    if (!s || !start_out || !end_out) return -1;
+    
+    char *dash = strchr(s, '-');
+    if (!dash) {
+        // Valeur unique
+        char *end = NULL;
+        errno = 0;
+        long v = strtol(s, &end, 10);
+        if (errno != 0 || *end != '\0' || v < 0) return -1;
+        *start_out = (int)v;
+        *end_out = (int)v;
+        return 0;
+    } else {
+        // Plage
+        char *start_str = strdup(s);
+        if (!start_str) return -1;
+        start_str[dash - s] = '\0';
+        
+        char *end = NULL;
+        errno = 0;
+        long start = strtol(start_str, &end, 10);
+        if (errno != 0 || *end != '\0' || start < 0) {
+            free(start_str);
+            return -1;
+        }
+        
+        errno = 0;
+        long end_val = strtol(dash + 1, &end, 10);
+        if (errno != 0 || *end != '\0' || end_val < start) {
+            free(start_str);
+            return -1;
+        }
+        
+        free(start_str);
+        *start_out = (int)start;
+        *end_out = (int)end_val;
+        return 0;
+    }
+}
+
+// Parse une liste de valeurs/plages séparées par des virgules (ex: "0,3,6,9" ou "0-5,10-15")
+static int parse_list(const char *s, int max_value, uint64_t *bits_out) {
+    if (!s || !bits_out) return -1;
+    *bits_out = 0;
+    
+    if (strcmp(s, "*") == 0) {
+        // Tous les bits à 1 (de 0 à max_value inclus, donc max_value+1 bits)
+        if (max_value < 63) {
+            *bits_out = (1ULL << (max_value + 1)) - 1;
+        } else {
+            *bits_out = 0xFFFFFFFFFFFFFFFFULL;
+        }
+        return 0;
+    }
+    
+    if (strcmp(s, "-") == 0) {
+        // Aucun bit (déjà à 0)
+        return 0;
+    }
+    
+    // Parser la liste : "0,3,6,9" ou "0-5,10"
+    char *copy = strdup(s);
+    if (!copy) return -1;
+    
+    char *token = strtok(copy, ",");
+    while (token) {
+        int start, end;
+        if (parse_value_or_range(token, &start, &end) < 0) {
+            free(copy);
+            return -1;
+        }
+        if (start > max_value || end > max_value) {
+            free(copy);
+            return -1;
+        }
+        for (int i = start; i <= end; i++) {
+            *bits_out |= (1ULL << i);
+        }
+        token = strtok(NULL, ",");
+    }
+    free(copy);
+    return 0;
+}
+
+// Parse les minutes (0-59)
+static int parse_minutes(const char *s, uint64_t *minutes_out) {
+    return parse_list(s, 59, minutes_out);
+}
+
+// Parse les heures (0-23)
+static int parse_hours(const char *s, uint32_t *hours_out) {
+    uint64_t bits = 0;
+    if (parse_list(s, 23, &bits) < 0) return -1;
+    *hours_out = (uint32_t)bits;
+    return 0;
+}
+
+// Parse les jours de la semaine (0-6)
+static int parse_days(const char *s, uint8_t *days_out) {
+    uint64_t bits = 0;
+    if (parse_list(s, 6, &bits) < 0) return -1;
+    *days_out = (uint8_t)bits;
+    return 0;
+}
+
 //Format command line (support simple et sequence)
 static char *format_command_line_internal(const command_t *cmd, int top_level);
 static char *format_command_line(const command_t *cmd) {
@@ -322,11 +429,25 @@ int main(int argc, char *argv[]) {
     int flag_times = 0;     //-x
     int flag_stdout = 0;    //-o
     int flag_stderr = 0;    //-e
+    int flag_create = 0;    //-c
+    int flag_remove = 0;    //-r
+    int flag_combine = 0;   //-s
+    int flag_abstract = 0;  //-n (tâche abstraite)
 
-    uint64_t single_taskid = 0; //for -x/-o/-e
+    uint64_t single_taskid = 0; //for -x/-o/-e/-r
     int have_single_taskid = 0;
 
-    const char *optstr = "lx:o:e:qp:";
+    // Timings pour CREATE et COMBINE
+    const char *minutes_str = NULL;
+    const char *hours_str = NULL;
+    const char *days_str = NULL;
+
+    // Taskids pour COMBINE
+    uint64_t *combine_taskids = NULL;
+    uint32_t combine_nbtasks = 0;
+    size_t combine_capacity = 0;
+
+    const char *optstr = "lx:o:e:qp:cr:sm:H:d:n";
 
     while ((opt = getopt(argc, argv, optstr)) != -1) {
         switch (opt) {
@@ -365,6 +486,32 @@ int main(int argc, char *argv[]) {
                 }
                 have_single_taskid = 1;
                 break;
+            case 'c':
+                flag_create = 1;
+                break;
+            case 'r':
+                flag_remove = 1;
+                if (parse_taskid(optarg, &single_taskid) != 0) {
+                    fprintf(stderr, "Invalid taskid for -r: %s\n", optarg);
+                    return 2;
+                }
+                have_single_taskid = 1;
+                break;
+            case 's':
+                flag_combine = 1;
+                break;
+            case 'm':
+                minutes_str = optarg;
+                break;
+            case 'H':
+                hours_str = optarg;
+                break;
+            case 'd':
+                days_str = optarg;
+                break;
+            case 'n':
+                flag_abstract = 1;
+                break;
             case '?':
             default:
                 fprintf(stderr, "Usage error: invalid option\n");
@@ -372,14 +519,80 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    int n_actions = flag_list + flag_terminate + flag_times + flag_stdout + flag_stderr;
+    // Parser les arguments restants pour CREATE (commande) ou COMBINE (taskids)
+    if (flag_create) {
+        // Les arguments restants sont la commande à créer
+        if (optind >= argc) {
+            fprintf(stderr, "Error: -c requires a command\n");
+            return 2;
+        }
+    } else if (flag_combine) {
+        // Les arguments restants sont les taskids à combiner
+        // Ignorer -p s'il apparaît (il a déjà été traité par getopt)
+        combine_capacity = 16; // Capacité initiale
+        combine_taskids = calloc(combine_capacity, sizeof(uint64_t));
+        if (!combine_taskids) {
+            perror("calloc");
+            return 1;
+        }
+        
+        for (int i = optind; i < argc; i++) {
+            // Ignorer -p s'il apparaît (cas où -p est après -s)
+            if (strcmp(argv[i], "-p") == 0) {
+                if (i + 1 < argc) {
+                    i++; // Ignorer aussi l'argument de -p
+                }
+                continue;
+            }
+            
+            // Vérifier si c'est une option (commence par -)
+            if (argv[i][0] == '-' && strlen(argv[i]) > 1) {
+                // C'est une option inconnue, arrêter le parsing
+                break;
+            }
+            
+            // Agrandir le tableau si nécessaire
+            if (combine_nbtasks >= combine_capacity) {
+                combine_capacity *= 2;
+                uint64_t *tmp = realloc(combine_taskids, combine_capacity * sizeof(uint64_t));
+                if (!tmp) {
+                    perror("realloc");
+                    free(combine_taskids);
+                    return 1;
+                }
+                combine_taskids = tmp;
+            }
+            
+            // Parser le taskid
+            if (parse_taskid(argv[i], &combine_taskids[combine_nbtasks]) != 0) {
+                fprintf(stderr, "Invalid taskid for -s: %s\n", argv[i]);
+                free(combine_taskids);
+                return 2;
+            }
+            combine_nbtasks++;
+        }
+        
+        if (combine_nbtasks == 0) {
+            fprintf(stderr, "Error: -s requires at least one taskid\n");
+            free(combine_taskids);
+            return 2;
+        }
+    }
+
+    int n_actions = flag_list + flag_terminate + flag_times + flag_stdout + flag_stderr + flag_create + flag_remove + flag_combine;
     if (n_actions == 0) {
-        fprintf(stderr, "No action specified. Use -l, -x, -o, -e or -q.\n");
+        fprintf(stderr, "No action specified. Use -l, -x, -o, -e, -q, -c, -r or -s.\n");
         return 2;
     }
 
-    if ((flag_times || flag_stdout || flag_stderr) && !have_single_taskid) {
+    if ((flag_times || flag_stdout || flag_stderr || flag_remove) && !have_single_taskid) {
         fprintf(stderr, "Option requires a taskid argument\n");
+        return 2;
+    }
+
+    if (flag_combine && combine_nbtasks == 0) {
+        fprintf(stderr, "Error: -s requires at least one taskid\n");
+        if (combine_taskids) free(combine_taskids);
         return 2;
     }
 
@@ -391,6 +604,111 @@ int main(int argc, char *argv[]) {
         req->opcode = OPCODE_LIST;
     } else if (flag_terminate) {
         req->opcode = OPCODE_TERMINATE;
+    } else if (flag_create) {
+        req->opcode = OPCODE_CREATE;
+        // Construire le timing
+        timing_t timing = {0, 0, 0};
+        if (flag_abstract) {
+            timing.minutes = 0;
+            timing.hours = 0;
+            timing.daysofweek = 0;
+        } else {
+            if (minutes_str) {
+                if (parse_minutes(minutes_str, &timing.minutes) < 0) {
+                    fprintf(stderr, "Invalid minutes format: %s\n", minutes_str);
+                    free(req);
+                    return 2;
+                }
+            } else {
+                timing.minutes = (1ULL << 60) - 1;
+            }
+            if (hours_str) {
+                if (parse_hours(hours_str, &timing.hours) < 0) {
+                    fprintf(stderr, "Invalid hours format: %s\n", hours_str);
+                    free(req);
+                    return 2;
+                }
+            } else {
+                timing.hours = (1U << 24) - 1;
+            }
+            if (days_str) {
+                if (parse_days(days_str, &timing.daysofweek) < 0) {
+                    fprintf(stderr, "Invalid days format: %s\n", days_str);
+                    free(req);
+                    return 2;
+                }
+            } else {
+                timing.daysofweek = 0x7F;
+            }
+        }
+        req->u.create.timing = timing;
+        // Construire les arguments de la commande
+        req->u.create.argc = (uint32_t)(argc - optind);
+        req->u.create.argv = calloc(req->u.create.argc, sizeof(char *));
+        if (!req->u.create.argv) {
+            perror("calloc");
+            free(req);
+            return 1;
+        }
+        for (uint32_t i = 0; i < req->u.create.argc; i++) {
+            req->u.create.argv[i] = strdup(argv[optind + i]);
+            if (!req->u.create.argv[i]) {
+                for (uint32_t j = 0; j < i; j++) {
+                    free(req->u.create.argv[j]);
+                }
+                free(req->u.create.argv);
+                free(req);
+                perror("strdup");
+                return 1;
+            }
+        }
+    } else if (flag_combine) {
+        req->opcode = OPCODE_COMBINE;
+        // Construire le timing (même logique que CREATE)
+        timing_t timing = {0, 0, 0};
+        if (flag_abstract) {
+            timing.minutes = 0;
+            timing.hours = 0;
+            timing.daysofweek = 0;
+        } else {
+            if (minutes_str) {
+                if (parse_minutes(minutes_str, &timing.minutes) < 0) {
+                    fprintf(stderr, "Invalid minutes format: %s\n", minutes_str);
+                    free(combine_taskids);
+                    free(req);
+                    return 2;
+                }
+            } else {
+                timing.minutes = (1ULL << 60) - 1;
+            }
+            if (hours_str) {
+                if (parse_hours(hours_str, &timing.hours) < 0) {
+                    fprintf(stderr, "Invalid hours format: %s\n", hours_str);
+                    free(combine_taskids);
+                    free(req);
+                    return 2;
+                }
+            } else {
+                timing.hours = (1U << 24) - 1;
+            }
+            if (days_str) {
+                if (parse_days(days_str, &timing.daysofweek) < 0) {
+                    fprintf(stderr, "Invalid days format: %s\n", days_str);
+                    free(combine_taskids);
+                    free(req);
+                    return 2;
+                }
+            } else {
+                timing.daysofweek = 0x7F;
+            }
+        }
+        req->u.combine.timing = timing;
+        req->u.combine.type = type_from_str("SQ"); // Séquence
+        req->u.combine.nbtasks = combine_nbtasks;
+        req->u.combine.taskids = combine_taskids;
+    } else if (flag_remove) {
+        req->opcode = OPCODE_REMOVE;
+        req->u.query.taskid = single_taskid;
     } else if (flag_times) {
         req->opcode = OPCODE_TIMES_EXITCODES;
         req->u.query.taskid = single_taskid;
@@ -403,6 +721,7 @@ int main(int argc, char *argv[]) {
     } else {
         fprintf(stderr, "No valid action detected after parsing\n");
         free(req);
+        if (combine_taskids) free(combine_taskids);
         return 2;
     }
 
