@@ -794,8 +794,20 @@ int main(int argc, char *argv[]) {
             handle_output_response(resp);
             break;
         case OPCODE_TERMINATE:
+        case OPCODE_REMOVE:
             if (resp->anstype == ANSTYPE_OK) {
-                // Pas de sortie pour TERMINATE (succès silencieux)
+                // Pas de sortie pour TERMINATE/REMOVE (succès silencieux)
+            } else if (resp->anstype == ANSTYPE_ERROR) {
+                fprintf(stderr, "ERROR: %s\n", errcode_to_str(resp->u.error.errcode));
+            } else {
+                fprintf(stderr, "Unknown response anstype=0x%04x\n", resp->anstype);
+            }
+            break;
+        case OPCODE_CREATE:
+        case OPCODE_COMBINE:
+            if (resp->anstype == ANSTYPE_OK) {
+                // Afficher le taskid de la nouvelle tâche
+                printf("%lu\n", (unsigned long)resp->u.create_ok.taskid);
             } else if (resp->anstype == ANSTYPE_ERROR) {
                 fprintf(stderr, "ERROR: %s\n", errcode_to_str(resp->u.error.errcode));
             } else {
