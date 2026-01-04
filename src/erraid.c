@@ -2,6 +2,7 @@
 
 #include "execution.h"
 #include "task_tree.h"
+#include "serialization.h"
 
 #include "protocol.h"
 #include <sys/select.h>
@@ -74,19 +75,26 @@ static int load_all_tasks(const char *run_dir, task_t ***tasks_out, size_t *coun
     char tasks_dir[MAX_PATH_LEN];
     int len = snprintf(tasks_dir, sizeof(tasks_dir), "%s/tasks", run_dir);
     if (len < 0 || len >= (int)sizeof(tasks_dir)) {
+        DEBUG_LOG("[DEBUG] load_all_tasks: path too long for run_dir=%s\n", run_dir);
         errno = ENAMETOOLONG;
         return -1;
     }
-
+    //DEBUG_LOG("[DEBUG] load_all_tasks: loading tasks from %s\n", tasks_dir);
     DIR *dir = opendir(tasks_dir);
     if (!dir) {
         if (errno == ENOENT) {
+            // Ne pas logger si le répertoire n'existe pas (c'est normal s'il n'y a pas de tâches)
+            // pour éviter de spammer les logs toutes les 10 secondes
+            //DEBUG_LOG("[DEBUG] load_all_tasks: tasks directory does not exist (normal if no tasks)\n");
             *tasks_out = NULL;
             *count_out = 0;
             return 0;
         }
+        DEBUG_LOG("[DEBUG] load_all_tasks: failed to open directory: %s\n", strerror(errno));
         return -1;
     }
+    
+    DEBUG_LOG("[DEBUG] load_all_tasks: loading tasks from %s\n", tasks_dir);
 
     size_t capacity = 8;
     size_t count = 0;
@@ -124,6 +132,9 @@ static int load_all_tasks(const char *run_dir, task_t ***tasks_out, size_t *coun
     }
     closedir(dir);
 
+    if (count > 0) {
+        DEBUG_LOG("[DEBUG] load_all_tasks: loaded %zu tasks\n", count);
+    }
     *tasks_out = tasks;
     *count_out = count;
     return 0;
@@ -329,9 +340,13 @@ int execute_task(const char *run_dir, const task_t *task) {
 
 int execute_task_with_timestamp(const char *run_dir, const task_t *task, time_t exec_timestamp) {
     if (!run_dir || !task || !task->cmd) {
+        DEBUG_LOG("[DEBUG] execute_task_with_timestamp: invalid parameters (run_dir=%p, task=%p)\n", 
+                  (void*)run_dir, (void*)task);
         errno = EINVAL;
         return -1;
     }
+
+    DEBUG_LOG("[DEBUG] Executing task %lu at timestamp %ld\n", task->taskid, (long)exec_timestamp);
 
     char *stdout_buf = NULL;
     char *stderr_buf = NULL;
@@ -341,26 +356,58 @@ int execute_task_with_timestamp(const char *run_dir, const task_t *task, time_t 
     int rc;
 
     if (task->cmd->nb_cmds > 0) {
-        rc = execute_sequence_command(task->cmd, &stdout_buf, &stdout_len,
-                                      &stderr_buf, &stderr_len, &exitcode);
+        // Détecter le type de combinaison
+        uint16_t cmd_type = task->cmd->type;
+        uint16_t type_pl = type_from_str("PL");
+        uint16_t type_if = type_from_str("IF");
+        
+        if (cmd_type == type_pl) {
+            DEBUG_LOG("[DEBUG] Task %lu: executing pipeline command (%u sub-commands)\n", 
+                      task->taskid, task->cmd->nb_cmds);
+            rc = execute_pipeline_command(task->cmd, &stdout_buf, &stdout_len,
+                                          &stderr_buf, &stderr_len, &exitcode);
+        } else if (cmd_type == type_if) {
+            DEBUG_LOG("[DEBUG] Task %lu: executing conditional command (%u sub-commands)\n", 
+                      task->taskid, task->cmd->nb_cmds);
+            rc = execute_conditional_command(task->cmd, &stdout_buf, &stdout_len,
+                                            &stderr_buf, &stderr_len, &exitcode);
+        } else {
+            // Par défaut, traiter comme séquence (SQ ou autre type non reconnu)
+            DEBUG_LOG("[DEBUG] Task %lu: executing sequence command (%u sub-commands, type=0x%04x)\n", 
+                      task->taskid, task->cmd->nb_cmds, cmd_type);
+            rc = execute_sequence_command(task->cmd, &stdout_buf, &stdout_len,
+                                          &stderr_buf, &stderr_len, &exitcode);
+        }
     } else {
+        DEBUG_LOG("[DEBUG] Task %lu: executing simple command\n", task->taskid);
         rc = execute_simple_command(task->cmd, &stdout_buf, &stdout_len,
                                     &stderr_buf, &stderr_len, &exitcode);
     }
     if (rc < 0) {
+        DEBUG_LOG("[DEBUG] Task %lu: execution failed: %s\n", task->taskid, strerror(errno));
         free(stdout_buf);
         free(stderr_buf);
         return -1;
     }
 
+    DEBUG_LOG("[DEBUG] Task %lu: execution completed (exitcode=%u, stdout_len=%zu, stderr_len=%zu)\n",
+              task->taskid, exitcode, stdout_len, stderr_len);
+
     // Utiliser le timestamp passé en paramètre (celui de la vérification à la seconde 0)
     int64_t timestamp = (int64_t)exec_timestamp;
-    append_execution_log(run_dir, task->taskid, timestamp, exitcode);
-    save_stdout(run_dir, task->taskid, stdout_buf, stdout_len);
-    save_stderr(run_dir, task->taskid, stderr_buf, stderr_len);
+    if (append_execution_log(run_dir, task->taskid, timestamp, exitcode) < 0) {
+        DEBUG_LOG("[DEBUG] Task %lu: failed to append execution log: %s\n", task->taskid, strerror(errno));
+    }
+    if (save_stdout(run_dir, task->taskid, stdout_buf, stdout_len) < 0) {
+        DEBUG_LOG("[DEBUG] Task %lu: failed to save stdout: %s\n", task->taskid, strerror(errno));
+    }
+    if (save_stderr(run_dir, task->taskid, stderr_buf, stderr_len) < 0) {
+        DEBUG_LOG("[DEBUG] Task %lu: failed to save stderr: %s\n", task->taskid, strerror(errno));
+    }
 
     free(stdout_buf);
     free(stderr_buf);
+    DEBUG_LOG("[DEBUG] Task %lu: execution finished successfully\n", task->taskid);
     return 0;
 }
 
@@ -389,14 +436,20 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
         return;
     }
 
+    DEBUG_LOG("[DEBUG] handle_request: received opcode=%d (taskid=%lu)\n", 
+              req->opcode, (req->opcode == OPCODE_TIMES_EXITCODES || req->opcode == OPCODE_STDOUT || req->opcode == OPCODE_STDERR) ? req->u.query.taskid : 0);
+    
     switch (req->opcode) {
     case OPCODE_LIST: {
+        DEBUG_LOG("[DEBUG] handle_request: processing LIST request\n");
         task_t **tasks = NULL;
         size_t count = 0;
         if (load_all_tasks(run_dir, &tasks, &count) < 0) {
+            DEBUG_LOG("[DEBUG] handle_request: LIST failed to load tasks: %s\n", strerror(errno));
             resp->anstype = ANSTYPE_ERROR;
             resp->u.error.errcode = ERRCODE_NOT_FOUND;
         } else {
+            DEBUG_LOG("[DEBUG] handle_request: LIST found %zu tasks\n", count);
             resp->anstype = ANSTYPE_OK;
             resp->u.list_ok.nbtasks = (uint32_t)count;
             resp->u.list_ok.tasks = tasks;
@@ -405,10 +458,12 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
         break;
     }
     case OPCODE_TIMES_EXITCODES: {
+        DEBUG_LOG("[DEBUG] handle_request: processing TIMES_EXITCODES for taskid=%lu\n", req->u.query.taskid);
         char path[MAX_PATH_LEN];
         struct stat st;
         if (build_task_dir_path(path, sizeof(path), run_dir, req->u.query.taskid) < 0 ||
             stat(path, &st) < 0 || !S_ISDIR(st.st_mode)) {
+            DEBUG_LOG("[DEBUG] handle_request: TIMES_EXITCODES task %lu not found\n", req->u.query.taskid);
             resp->anstype = ANSTYPE_ERROR;
             resp->u.error.errcode = ERRCODE_NOT_FOUND;
             break;
@@ -417,10 +472,14 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
         uint16_t *exitcodes = NULL;
         uint32_t nbruns = 0;
         if (read_execution_logs(run_dir, req->u.query.taskid, &timestamps, &exitcodes, &nbruns) < 0) {
+            DEBUG_LOG("[DEBUG] handle_request: TIMES_EXITCODES failed to read logs for task %lu: %s\n", 
+                      req->u.query.taskid, strerror(errno));
             resp->anstype = ANSTYPE_ERROR;
             resp->u.error.errcode = ERRCODE_NOT_FOUND;
             break;
         }
+        DEBUG_LOG("[DEBUG] handle_request: TIMES_EXITCODES found %u runs for task %lu\n", 
+                  nbruns, req->u.query.taskid);
         // Si nbruns == 0, on retourne quand même OK avec une liste vide (pas d'erreur)
         resp->anstype = ANSTYPE_OK;
         resp->u.times_exitcodes_ok.nbruns = nbruns;
@@ -475,6 +534,74 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
         g_stop = 1;
         DEBUG_LOG("[DEBUG] TERMINATE: g_stop set to 1, sending response\n");
         break;
+    case OPCODE_CREATE: {
+        DEBUG_LOG("[DEBUG] handle_request: processing CREATE request\n");
+        // Créer une commande simple à partir des arguments
+        command_t *cmd = create_simple_command("SI", req->u.create.argc, req->u.create.argv);
+        if (!cmd) {
+            DEBUG_LOG("[DEBUG] handle_request: CREATE failed to create command: %s\n", strerror(errno));
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        // Générer un ID unique
+        uint64_t new_taskid = generate_task_id(run_dir);
+        // Créer la tâche
+        task_t *task = calloc(1, sizeof(task_t));
+        if (!task) {
+            free_command(cmd);
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        task->taskid = new_taskid;
+        task->timing = req->u.create.timing;
+        task->cmd = cmd;
+        // Sauvegarder la tâche
+        if (save_task_to_dir(run_dir, task) < 0) {
+            DEBUG_LOG("[DEBUG] handle_request: CREATE failed to save task: %s\n", strerror(errno));
+            free_task(task);
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        DEBUG_LOG("[DEBUG] handle_request: CREATE created task %lu\n", new_taskid);
+        resp->anstype = ANSTYPE_OK;
+        resp->u.create_ok.taskid = new_taskid;
+        resp->opcode_used = OPCODE_CREATE;
+        free_task(task); // La tâche est sauvegardée, on peut libérer
+        break;
+    }
+    case OPCODE_REMOVE: {
+        DEBUG_LOG("[DEBUG] handle_request: processing REMOVE request for taskid=%lu\n", req->u.query.taskid);
+        if (remove_task(run_dir, req->u.query.taskid) < 0) {
+            DEBUG_LOG("[DEBUG] handle_request: REMOVE failed for task %lu: %s\n", 
+                      req->u.query.taskid, strerror(errno));
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        DEBUG_LOG("[DEBUG] handle_request: REMOVE removed task %lu\n", req->u.query.taskid);
+        resp->anstype = ANSTYPE_OK;
+        resp->opcode_used = OPCODE_REMOVE;
+        break;
+    }
+    case OPCODE_COMBINE: {
+        DEBUG_LOG("[DEBUG] handle_request: processing COMBINE request for %u tasks\n", req->u.combine.nbtasks);
+        uint64_t new_taskid;
+        if (combine_tasks(run_dir, req->u.combine.taskids, req->u.combine.nbtasks, 
+                         req->u.combine.type, &req->u.combine.timing, &new_taskid) < 0) {
+            DEBUG_LOG("[DEBUG] handle_request: COMBINE failed: %s\n", strerror(errno));
+            resp->anstype = ANSTYPE_ERROR;
+            resp->u.error.errcode = ERRCODE_NOT_FOUND;
+            break;
+        }
+        DEBUG_LOG("[DEBUG] handle_request: COMBINE created task %lu\n", new_taskid);
+        resp->anstype = ANSTYPE_OK;
+        resp->u.create_ok.taskid = new_taskid;
+        resp->opcode_used = OPCODE_COMBINE;
+        break;
+    }
     default:
         resp->anstype = ANSTYPE_ERROR;
         resp->u.error.errcode = ERRCODE_NOT_FOUND;
@@ -571,19 +698,23 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
 
 
 static void usage(const char *prog) {
-    fprintf(stderr, "Usage: %s [-r <run_dir>] [-d]\n", prog);
-    fprintf(stderr, "  -r <run_dir>  Répertoire d'exécution (défaut: /tmp/$USER/erraid)\n");
+    fprintf(stderr, "Usage: %s [-R <run_dir>] [-P <pipes_dir>] [-F] [-d]\n", prog);
+    fprintf(stderr, "  -R <run_dir>  Répertoire d'exécution (défaut: /tmp/$USER/erraid)\n");
+    fprintf(stderr, "  -P <pipes_dir> Répertoire des pipes (défaut: <run_dir>/pipes)\n");
+    fprintf(stderr, "  -F            Exécution en avant-plan (sans démonisation)\n");
     fprintf(stderr, "  -d            Activer les logs de debug\n");
     fprintf(stderr, "  -h, --help    Afficher cette aide\n");
 }
 
 int main(int argc, char **argv) {
     const char *run_dir = NULL;
+    const char *pipes_dir_arg = NULL;
     char default_run_dir[512];
     char pipes_dir[512];
     int opt;
     int request_fd = -1;
     int reply_fd = -1;
+    int foreground __attribute__((unused)) = 0;  // Flag pour -F (exécution en avant-plan)
 
     // Vérifier --help et -h avant getopt
     for (int i = 1; i < argc; i++) {
@@ -593,10 +724,19 @@ int main(int argc, char **argv) {
         }
     }
 
-    while ((opt = getopt(argc, argv, "r:hd")) != -1) {
+    // Support des deux formats : ancien (-r, -p) et nouveau (-R, -P) pour compatibilité
+    while ((opt = getopt(argc, argv, "R:r:P:p:Fhd")) != -1) {
         switch (opt) {
-        case 'r':
+        case 'R':
+        case 'r':  // Support ancien format pour compatibilité avec les tests
             run_dir = optarg;
+            break;
+        case 'P':
+        case 'p':  // Support ancien format pour compatibilité avec les tests
+            pipes_dir_arg = optarg;
+            break;
+        case 'F':
+            foreground = 1;
             break;
         case 'd':
             g_debug_logs = 1;
@@ -625,9 +765,17 @@ int main(int argc, char **argv) {
         run_dir = default_run_dir;
     }
 
-    if (snprintf(pipes_dir, sizeof(pipes_dir), "%s/pipes", run_dir) < 0 || strlen(pipes_dir) >= sizeof(pipes_dir)) {
-        fprintf(stderr, "Erreur: chemin pipes trop long\n");
-        return EXIT_FAILURE;
+    // Si pipes_dir n'est pas fourni, utiliser <run_dir>/pipes par défaut
+    if (!pipes_dir_arg) {
+        if (snprintf(pipes_dir, sizeof(pipes_dir), "%s/pipes", run_dir) < 0 || strlen(pipes_dir) >= sizeof(pipes_dir)) {
+            fprintf(stderr, "Erreur: chemin pipes trop long\n");
+            return EXIT_FAILURE;
+        }
+    } else {
+        if (snprintf(pipes_dir, sizeof(pipes_dir), "%s", pipes_dir_arg) < 0 || strlen(pipes_dir) >= sizeof(pipes_dir)) {
+            fprintf(stderr, "Erreur: chemin pipes trop long\n");
+            return EXIT_FAILURE;
+        }
     }
 
     if (init_task_directory(run_dir) < 0) {
