@@ -33,6 +33,6 @@ int read_stderr(const char *run_dir, uint64_t taskid, char **output_out, size_t 
 // Fonctions pour le rendu final
 uint64_t generate_task_id(const char *run_dir);
 int remove_task(const char *run_dir, uint64_t taskid);
-int combine_tasks(const char *run_dir, const uint64_t *taskids, uint32_t nbtasks, uint16_t combine_type, const timing_t *timing, uint64_t *new_taskid_out);
+int combine_tasks(const char *run_dir, uint64_t *taskids, uint32_t nbtasks, uint16_t combine_type, timing_t *timing, uint64_t *new_taskid_out);
 
 #endif // TASK_TREE_H

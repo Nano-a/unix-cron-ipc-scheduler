@@ -644,10 +644,6 @@ int read_stderr(const char *run_dir, uint64_t taskid, char **output_out, size_t 
     return read_stream_file(run_dir, taskid, "stderr", output_out, len_out);
 }
 
-// ============================================================================
-// Fonctions pour le rendu final (T3.2)
-// ============================================================================
-
 // Helper pour vérifier si une chaîne est un nombre
 static int is_number(const char *name) {
     if (!name || *name == '\0') {
@@ -671,7 +667,13 @@ uint64_t generate_task_id(const char *run_dir) {
 
     DIR *dir = opendir(tasks_dir);
     if (!dir) {
-        // Si le répertoire n'existe pas, retourner 0 comme premier ID
+        // Si le répertoire n'existe pas, créer le répertoire
+        // (le répertoire sera créé par init_task_directory, mais on peut aussi le créer ici pour être sûr)
+        if (mkdir(tasks_dir, 0755) < 0 && errno != EEXIST) {
+            return 0;
+        }
+        // Répertoire créé ou existe déjà, mais vide : retourner 0 comme premier ID
+        // (cohérent avec le comportement attendu : IDs commencent à 0)
         return 0;
     }
 
@@ -740,7 +742,7 @@ int remove_task(const char *run_dir, uint64_t taskid) {
 }
 
 // Combine plusieurs tâches en une nouvelle tâche
-int combine_tasks(const char *run_dir, const uint64_t *taskids, uint32_t nbtasks, uint16_t combine_type, const timing_t *timing, uint64_t *new_taskid_out) {
+int combine_tasks(const char *run_dir, uint64_t *taskids, uint32_t nbtasks, uint16_t combine_type, timing_t *timing, uint64_t *new_taskid_out) {
     if (!run_dir || !taskids || nbtasks == 0 || !timing || !new_taskid_out) {
         errno = EINVAL;
         return -1;
@@ -785,9 +787,7 @@ int combine_tasks(const char *run_dir, const uint64_t *taskids, uint32_t nbtasks
         errno = saved;
         return -1;
     }
-    if (close(fd) < 0) {
-        return -1;
-    }
+    close(fd);
 
     // Créer le répertoire cmd
     char cmd_dir[MAX_PATH_LEN];
@@ -817,9 +817,7 @@ int combine_tasks(const char *run_dir, const uint64_t *taskids, uint32_t nbtasks
         errno = saved;
         return -1;
     }
-    if (close(fd) < 0) {
-        return -1;
-    }
+    close(fd);
 
     // Écrire le nombre de sous-commandes
     char nbcmds_path[MAX_PATH_LEN];
@@ -838,9 +836,7 @@ int combine_tasks(const char *run_dir, const uint64_t *taskids, uint32_t nbtasks
         errno = saved;
         return -1;
     }
-    if (close(fd) < 0) {
-        return -1;
-    }
+    close(fd);
 
     // Copier les arborescences cmd de chaque tâche
     for (uint32_t i = 0; i < nbtasks; i++) {

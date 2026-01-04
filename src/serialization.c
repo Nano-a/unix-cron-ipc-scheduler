@@ -1,6 +1,3 @@
-// TODO: À compléter par la personne responsable de la sérialisation
-// Référence : serialisation.md, ARCHITECTURE_T1.1.md
-
 #define _DEFAULT_SOURCE
 #include "serialization.h"
 #include <endian.h>

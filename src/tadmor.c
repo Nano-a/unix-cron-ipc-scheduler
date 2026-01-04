@@ -1,6 +1,3 @@
-//tadmor.c - client argument parsing + consultative requests (T2.5 + T2.6)
-//Version corrigée : parsing complet des timings, formatage correct des commandes
-
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
@@ -41,46 +38,42 @@ static int parse_taskid(const char *s, uint64_t *out) {
     return 0;
 }
 
-// Parse une valeur unique ou une plage (ex: "5" ou "5-10")
-static int parse_value_or_range(const char *s, int *start_out, int *end_out) {
-    if (!s || !start_out || !end_out) return -1;
+// Parse une valeur ou une plage (ex: "5" ou "5-10")
+static int parse_value_or_range(const char *s, int *start, int *end) {
+    if (!s) return -1;
     
-    char *dash = strchr(s, '-');
-    if (!dash) {
-        // Valeur unique
-        char *end = NULL;
+    // Créer une copie modifiable de la chaîne
+    char *copy = strdup(s);
+    if (!copy) return -1;
+    
+    char *dash = strchr(copy, '-');
+    if (dash) {
+        // Plage : "5-10"
+        *dash = '\0';
+        char *end1 = NULL, *end2 = NULL;
         errno = 0;
-        long v = strtol(s, &end, 10);
-        if (errno != 0 || *end != '\0' || v < 0) return -1;
-        *start_out = (int)v;
-        *end_out = (int)v;
-        return 0;
+        long v1 = strtol(copy, &end1, 10);
+        long v2 = strtol(dash + 1, &end2, 10);
+        if (errno != 0 || *end1 != '\0' || *end2 != '\0' || v1 < 0 || v2 < 0 || v1 > v2) {
+            free(copy);
+            return -1;
+        }
+        *start = (int)v1;
+        *end = (int)v2;
     } else {
-        // Plage
-        char *start_str = strdup(s);
-        if (!start_str) return -1;
-        start_str[dash - s] = '\0';
-        
-        char *end = NULL;
+        // Valeur unique : "5"
+        char *end_ptr = NULL;
         errno = 0;
-        long start = strtol(start_str, &end, 10);
-        if (errno != 0 || *end != '\0' || start < 0) {
-            free(start_str);
+        long v = strtol(copy, &end_ptr, 10);
+        if (errno != 0 || *end_ptr != '\0' || v < 0) {
+            free(copy);
             return -1;
         }
-        
-        errno = 0;
-        long end_val = strtol(dash + 1, &end, 10);
-        if (errno != 0 || *end != '\0' || end_val < start) {
-            free(start_str);
-            return -1;
-        }
-        
-        free(start_str);
-        *start_out = (int)start;
-        *end_out = (int)end_val;
-        return 0;
+        *start = (int)v;
+        *end = (int)v;
     }
+    free(copy);
+    return 0;
 }
 
 // Parse une liste de valeurs/plages séparées par des virgules (ex: "0,3,6,9" ou "0-5,10-15")
@@ -185,6 +178,8 @@ static char *format_command_line_internal(const command_t *cmd, int top_level) {
         char **sub_cmds = malloc(cmd->nb_cmds * sizeof(char*));
         if (!sub_cmds) return NULL;
         
+        // Les parenthèses externes sont facultatives selon l'énoncé
+        // Le test 11 attend qu'elles ne soient pas ajoutées au niveau top
         size_t total_len = (top_level ? 0 : 4);  // "( " et " )" avec espaces si pas top_level
         for (uint32_t i = 0; i < cmd->nb_cmds; i++) {
             sub_cmds[i] = format_command_line_internal(cmd->cmds[i], 0);
@@ -225,6 +220,166 @@ static char *format_command_line_internal(const command_t *cmd, int top_level) {
         }
         result[pos] = '\0';
         free(sub_cmds);
+        return result;
+    } else if (cmd->type == type_from_str("PL")) {
+        // Pipeline : formater avec |
+        if (cmd->nb_cmds == 0 || !cmd->cmds) return strdup("()");
+        
+        char **sub_cmds = malloc(cmd->nb_cmds * sizeof(char*));
+        if (!sub_cmds) return NULL;
+        
+        // Les parenthèses externes sont facultatives selon l'énoncé
+        size_t total_len = (top_level ? 0 : 4);  // "( " et " )" avec espaces si pas top_level
+        for (uint32_t i = 0; i < cmd->nb_cmds; i++) {
+            sub_cmds[i] = format_command_line_internal(cmd->cmds[i], 0);
+            if (!sub_cmds[i]) {
+                for (uint32_t j = 0; j < i; j++) free(sub_cmds[j]);
+                free(sub_cmds);
+                return NULL;
+            }
+            total_len += strlen(sub_cmds[i]) + 3;  // +3 pour " | "
+        }
+        
+        char *result = malloc(total_len);
+        if (!result) {
+            for (uint32_t i = 0; i < cmd->nb_cmds; i++) free(sub_cmds[i]);
+            free(sub_cmds);
+            return NULL;
+        }
+        
+        size_t pos = 0;
+        if (!top_level) {
+            result[pos++] = '(';
+            result[pos++] = ' ';
+        }
+        for (uint32_t i = 0; i < cmd->nb_cmds; i++) {
+            size_t len = strlen(sub_cmds[i]);
+            memcpy(result + pos, sub_cmds[i], len);
+            pos += len;
+            free(sub_cmds[i]);
+            if (i < cmd->nb_cmds - 1) {
+                result[pos++] = ' ';
+                result[pos++] = '|';
+                result[pos++] = ' ';
+            }
+        }
+        if (!top_level) {
+            result[pos++] = ' ';
+            result[pos++] = ')';
+        }
+        result[pos] = '\0';
+        free(sub_cmds);
+        return result;
+    } else if (cmd->type == type_from_str("IF")) {
+        // Conditionnelle : if CMD1 ; then CMD2 ; else CMD3 ; fi
+        if (cmd->nb_cmds < 2 || cmd->nb_cmds > 3 || !cmd->cmds) return NULL;
+        
+        char *cond_cmd = format_command_line_internal(cmd->cmds[0], 0);
+        char *then_cmd = format_command_line_internal(cmd->cmds[1], 0);
+        char *else_cmd = (cmd->nb_cmds >= 3) ? format_command_line_internal(cmd->cmds[2], 0) : NULL;
+        
+        if (!cond_cmd || !then_cmd || (cmd->nb_cmds >= 3 && !else_cmd)) {
+            free(cond_cmd);
+            free(then_cmd);
+            free(else_cmd);
+            return NULL;
+        }
+        
+        // Calculer la taille nécessaire
+        // Les parenthèses externes sont facultatives selon l'énoncé
+        size_t total_len = (top_level ? 0 : 4);  // "( " et " )" avec espaces si pas top_level
+        total_len += 3;  // "if "
+        total_len += strlen(cond_cmd);
+        // Vérifier si cond_cmd est simple (pas de parenthèses) pour ajouter ";"
+        int cond_is_simple = (cond_cmd[0] != '(');
+        if (cond_is_simple) total_len += 2;  // "; "
+        total_len += 6;  // "then "
+        total_len += strlen(then_cmd);
+        if (else_cmd) {
+            // Vérifier si then_cmd est simple pour ajouter ";"
+            int then_is_simple = (then_cmd[0] != '(');
+            if (then_is_simple) total_len += 2;  // "; "
+            total_len += 6;  // "else "
+            total_len += strlen(else_cmd);
+            total_len += 2;  // "; "
+        } else {
+            // Pas de else, mais on peut avoir un ";" après then si simple
+            int then_is_simple = (then_cmd[0] != '(');
+            if (then_is_simple) total_len += 2;  // "; "
+        }
+        total_len += 3;  // "fi"
+        
+        char *result = malloc(total_len);
+        if (!result) {
+            free(cond_cmd);
+            free(then_cmd);
+            free(else_cmd);
+            return NULL;
+        }
+        
+        size_t pos = 0;
+        if (!top_level) {
+            result[pos++] = '(';
+            result[pos++] = ' ';
+        }
+        // "if "
+        memcpy(result + pos, "if ", 3);
+        pos += 3;
+        // Condition
+        size_t len = strlen(cond_cmd);
+        memcpy(result + pos, cond_cmd, len);
+        pos += len;
+        free(cond_cmd);
+        // "; " si simple
+        if (cond_is_simple) {
+            result[pos++] = ' ';
+            result[pos++] = ';';
+            result[pos++] = ' ';
+        }
+        // "then "
+        memcpy(result + pos, "then ", 5);
+        pos += 5;
+        // Then
+        len = strlen(then_cmd);
+        int then_is_simple = (then_cmd[0] != '(');
+        memcpy(result + pos, then_cmd, len);
+        pos += len;
+        if (else_cmd) {
+            // "; " si then est simple
+            if (then_is_simple) {
+                result[pos++] = ' ';
+                result[pos++] = ';';
+                result[pos++] = ' ';
+            }
+            // "else "
+            memcpy(result + pos, "else ", 5);
+            pos += 5;
+            // Else
+            len = strlen(else_cmd);
+            memcpy(result + pos, else_cmd, len);
+            pos += len;
+            free(else_cmd);
+            // "; "
+            result[pos++] = ' ';
+            result[pos++] = ';';
+            result[pos++] = ' ';
+        } else {
+            // Pas de else, mais ";" si then est simple
+            if (then_is_simple) {
+                result[pos++] = ' ';
+                result[pos++] = ';';
+                result[pos++] = ' ';
+            }
+        }
+        free(then_cmd);
+        // "fi"
+        memcpy(result + pos, "fi", 2);
+        pos += 2;
+        if (!top_level) {
+            result[pos++] = ' ';
+            result[pos++] = ')';
+        }
+        result[pos] = '\0';
         return result;
     }
     
@@ -446,21 +601,54 @@ int main(int argc, char *argv[]) {
     uint64_t *combine_taskids = NULL;
     uint32_t combine_nbtasks = 0;
     size_t combine_capacity = 0;
+    uint16_t combine_type = type_from_str("SQ");  // Par défaut séquence
 
-    const char *optstr = "lx:o:e:qp:cr:sm:H:d:n";
+    // Support des deux formats : -P (nouveau) et -p (ancien) pour PIPES_DIR
+    // -p peut être soit PIPES_DIR (avec argument qui est un chemin) soit pipeline (avec argument qui est un nombre)
+    // On utilise p: pour que getopt consomme l'argument, puis on vérifie si c'est un chemin ou un nombre
+    const char *optstr = "lx:o:e:qP:p:cr:sp:im:H:d:n";
 
     while ((opt = getopt(argc, argv, optstr)) != -1) {
         switch (opt) {
             case 'l': flag_list = 1; break;
             case 'q': flag_terminate = 1; break;
-        case 'p':
+            case 'P':
                 if (optarg && optarg[0] != '\0') {
                     strncpy(run_dir, optarg, sizeof(run_dir) - 1);
                     run_dir[sizeof(run_dir) - 1] = '\0';
                 } else {
-                    fprintf(stderr, "Error: -p requires a directory argument\n");
+                    fprintf(stderr, "Error: -P requires a directory argument\n");
                     return 2;
                 }
+                break;
+            case 'p':
+                // -p peut être soit PIPES_DIR (avec argument qui est un chemin) soit pipeline (sans argument, suivi de taskids)
+                // Si optarg existe et ressemble à un chemin, c'est PIPES_DIR
+                // Sinon, c'est pipeline (l'argument sera traité comme taskid)
+                if (optarg && optarg[0] != '\0') {
+                    // Vérifier si c'est un chemin (contient "/" ou commence par "/" ou ".")
+                    if (strchr(optarg, '/') != NULL || optarg[0] == '/' || optarg[0] == '.') {
+                        // -p avec chemin = PIPES_DIR (ancien format pour compatibilité avec les tests)
+                        strncpy(run_dir, optarg, sizeof(run_dir) - 1);
+                        run_dir[sizeof(run_dir) - 1] = '\0';
+                    } else {
+                        // -p avec autre chose (probablement une option comme -n) = Pipeline
+                        // Remettre l'argument pour qu'il soit traité normalement
+                        flag_combine = 1;
+                        combine_type = type_from_str("PL");
+                        optind--;
+                        argv[optind] = optarg;
+                    }
+                } else {
+                    // -p sans argument = Pipeline (nouvelle fonctionnalité)
+                    flag_combine = 1;
+                    combine_type = type_from_str("PL");
+                }
+                break;
+            case 'i':
+                // Conditionnelle: nouvelle option pour combinaison conditionnelle
+                flag_combine = 1;
+                combine_type = type_from_str("IF");
                 break;
             case 'x':
                 flag_times = 1;
@@ -528,54 +716,63 @@ int main(int argc, char *argv[]) {
         }
     } else if (flag_combine) {
         // Les arguments restants sont les taskids à combiner
-        // Ignorer -p s'il apparaît (il a déjà été traité par getopt)
-        combine_capacity = 16; // Capacité initiale
+        // Parser tous les arguments restants qui ne sont pas des options
+        int taskid_count = 0;
+        for (int i = optind; i < argc; i++) {
+            // Vérifier que ce n'est pas une option (commence par -)
+            // Ignorer -P car il peut apparaître après les taskids
+            if (argv[i][0] == '-' && strlen(argv[i]) > 1) {
+                // Si c'est -P, on l'ignore (il a déjà été traité par getopt)
+                // Sinon, c'est une autre option, on s'arrête
+                if (strcmp(argv[i], "-P") != 0) {
+                    break;
+                }
+                // Si c'est -P, continuer (mais ne pas le compter comme taskid)
+                continue;
+            }
+            taskid_count++;
+        }
+        
+        // Validation selon le type de combinaison
+        if (combine_type == type_from_str("IF")) {
+            // Conditionnelle : 2 ou 3 taskids
+            if (taskid_count < 2 || taskid_count > 3) {
+                fprintf(stderr, "Error: -i requires 2 or 3 taskids\n");
+                return 2;
+            }
+        } else if (combine_type == type_from_str("PL")) {
+            // Pipeline : au moins 2 taskids
+            if (taskid_count < 2) {
+                fprintf(stderr, "Error: -p requires at least 2 taskids\n");
+                return 2;
+            }
+        } else {
+            // Séquence : au moins 1 taskid
+            if (taskid_count == 0) {
+                fprintf(stderr, "Error: -s requires at least one taskid\n");
+                return 2;
+            }
+        }
+        
+        combine_capacity = (size_t)taskid_count;
         combine_taskids = calloc(combine_capacity, sizeof(uint64_t));
         if (!combine_taskids) {
             perror("calloc");
             return 1;
         }
-        
-        for (int i = optind; i < argc; i++) {
-            // Ignorer -p s'il apparaît (cas où -p est après -s)
-            if (strcmp(argv[i], "-p") == 0) {
-                if (i + 1 < argc) {
-                    i++; // Ignorer aussi l'argument de -p
-                }
+        for (int i = optind; i < optind + taskid_count; i++) {
+            // Ignorer -P s'il apparaît (il a déjà été traité par getopt)
+            if (strcmp(argv[i], "-P") == 0) {
                 continue;
             }
-            
-            // Vérifier si c'est une option (commence par -)
-            if (argv[i][0] == '-' && strlen(argv[i]) > 1) {
-                // C'est une option inconnue, arrêter le parsing
-                break;
-            }
-            
-            // Agrandir le tableau si nécessaire
-            if (combine_nbtasks >= combine_capacity) {
-                combine_capacity *= 2;
-                uint64_t *tmp = realloc(combine_taskids, combine_capacity * sizeof(uint64_t));
-                if (!tmp) {
-                    perror("realloc");
-                    free(combine_taskids);
-                    return 1;
-                }
-                combine_taskids = tmp;
-            }
-            
-            // Parser le taskid
             if (parse_taskid(argv[i], &combine_taskids[combine_nbtasks]) != 0) {
-                fprintf(stderr, "Invalid taskid for -s: %s\n", argv[i]);
+                const char *opt_name = (combine_type == type_from_str("IF")) ? "-i" :
+                                       (combine_type == type_from_str("PL")) ? "-p" : "-s";
+                fprintf(stderr, "Invalid taskid for %s: %s\n", opt_name, argv[i]);
                 free(combine_taskids);
                 return 2;
             }
             combine_nbtasks++;
-        }
-        
-        if (combine_nbtasks == 0) {
-            fprintf(stderr, "Error: -s requires at least one taskid\n");
-            free(combine_taskids);
-            return 2;
         }
     }
 
@@ -591,7 +788,9 @@ int main(int argc, char *argv[]) {
     }
 
     if (flag_combine && combine_nbtasks == 0) {
-        fprintf(stderr, "Error: -s requires at least one taskid\n");
+        const char *opt_name = (combine_type == type_from_str("IF")) ? "-i" :
+                               (combine_type == type_from_str("PL")) ? "-p" : "-s";
+        fprintf(stderr, "Error: %s requires taskids\n", opt_name);
         if (combine_taskids) free(combine_taskids);
         return 2;
     }
@@ -604,15 +803,29 @@ int main(int argc, char *argv[]) {
         req->opcode = OPCODE_LIST;
     } else if (flag_terminate) {
         req->opcode = OPCODE_TERMINATE;
+    } else if (flag_times) {
+        req->opcode = OPCODE_TIMES_EXITCODES;
+        req->u.query.taskid = single_taskid;
+    } else if (flag_stdout) {
+        req->opcode = OPCODE_STDOUT;
+        req->u.query.taskid = single_taskid;
+    } else if (flag_stderr) {
+        req->opcode = OPCODE_STDERR;
+        req->u.query.taskid = single_taskid;
+    } else if (flag_remove) {
+        req->opcode = OPCODE_REMOVE;
+        req->u.query.taskid = single_taskid;
     } else if (flag_create) {
         req->opcode = OPCODE_CREATE;
         // Construire le timing
         timing_t timing = {0, 0, 0};
         if (flag_abstract) {
+            // Tâche abstraite : timing = 0,0,0 (représenté par "- - -")
             timing.minutes = 0;
             timing.hours = 0;
             timing.daysofweek = 0;
         } else {
+            // Timing par défaut : toutes les minutes si non spécifié
             if (minutes_str) {
                 if (parse_minutes(minutes_str, &timing.minutes) < 0) {
                     fprintf(stderr, "Invalid minutes format: %s\n", minutes_str);
@@ -620,7 +833,7 @@ int main(int argc, char *argv[]) {
                     return 2;
                 }
             } else {
-                timing.minutes = (1ULL << 60) - 1;
+                timing.minutes = (1ULL << 60) - 1; // Toutes les minutes
             }
             if (hours_str) {
                 if (parse_hours(hours_str, &timing.hours) < 0) {
@@ -629,7 +842,7 @@ int main(int argc, char *argv[]) {
                     return 2;
                 }
             } else {
-                timing.hours = (1U << 24) - 1;
+                timing.hours = (1U << 24) - 1; // Toutes les heures
             }
             if (days_str) {
                 if (parse_days(days_str, &timing.daysofweek) < 0) {
@@ -638,7 +851,7 @@ int main(int argc, char *argv[]) {
                     return 2;
                 }
             } else {
-                timing.daysofweek = 0x7F;
+                timing.daysofweek = 0x7F; // Tous les jours
             }
         }
         req->u.create.timing = timing;
@@ -703,25 +916,13 @@ int main(int argc, char *argv[]) {
             }
         }
         req->u.combine.timing = timing;
-        req->u.combine.type = type_from_str("SQ"); // Séquence
+        req->u.combine.type = combine_type; // SQ, PL ou IF selon l'option
         req->u.combine.nbtasks = combine_nbtasks;
         req->u.combine.taskids = combine_taskids;
-    } else if (flag_remove) {
-        req->opcode = OPCODE_REMOVE;
-        req->u.query.taskid = single_taskid;
-    } else if (flag_times) {
-        req->opcode = OPCODE_TIMES_EXITCODES;
-        req->u.query.taskid = single_taskid;
-    } else if (flag_stdout) {
-        req->opcode = OPCODE_STDOUT;
-        req->u.query.taskid = single_taskid;
-    } else if (flag_stderr) {
-        req->opcode = OPCODE_STDERR;
-        req->u.query.taskid = single_taskid;
     } else {
         fprintf(stderr, "No valid action detected after parsing\n");
-        free(req);
         if (combine_taskids) free(combine_taskids);
+        free(req);
         return 2;
     }
 
@@ -830,7 +1031,7 @@ int main(int argc, char *argv[]) {
 
     // Libérer la mémoire
     if (resp) free_response(resp);
-    free_request(req);  // free_request fait déjà le free(req)
+    free_request(req);  // free_request libère req et ses allocations (argv pour CREATE, taskids pour COMBINE)
     close(req_fd);
     close(rep_fd);
 
