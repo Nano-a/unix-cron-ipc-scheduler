@@ -229,7 +229,9 @@ static void* task_execution_thread(void *arg) {
     }
     
     int iteration = 0;
-    const int MAX_ITERATIONS = 1000000; // Limite pour éviter boucle infinie (environ 11 jours si sleep(1))
+    const int MAX_ITERATIONS = 1000000; // Limite pour éviter boucle infinie
+    int last_checked_second = -1;
+    
     while (!g_stop && iteration < MAX_ITERATIONS) {
         iteration++;
         time_t now = time(NULL);
@@ -237,8 +239,7 @@ static void* task_execution_thread(void *arg) {
         localtime_r(&now, &tm_now);
         
         // Recharger les tâches périodiquement pour détecter les nouvelles tâches
-        // Vérifier g_stop avant et après pour arrêt rapide
-        if (iteration % 10 == 0 && !g_stop) {
+        if (iteration % 600 == 0 && !g_stop) { // Toutes les 60 secondes (600 x 100ms)
             if (cached_tasks) {
                 free_task_array(cached_tasks, cached_count);
                 free(last_executed_minute);
@@ -246,9 +247,7 @@ static void* task_execution_thread(void *arg) {
                 cached_count = 0;
                 last_executed_minute = NULL;
             }
-            // Vérifier g_stop avant load_all_tasks (qui peut prendre du temps)
             if (!g_stop && load_all_tasks(run_dir, &cached_tasks, &cached_count) == 0) {
-                // Vérifier g_stop après load_all_tasks
                 if (!g_stop) {
                     last_executed_minute = calloc(cached_count, sizeof(int));
                     if (last_executed_minute) {
@@ -260,62 +259,61 @@ static void* task_execution_thread(void *arg) {
             }
         }
         
-        // Calculer un identifiant unique pour la minute actuelle
-        int current_minute_id = tm_now.tm_year * 525600 + tm_now.tm_mon * 43200 + 
-                                tm_now.tm_mday * 1440 + tm_now.tm_hour * 60 + tm_now.tm_min;
-        
-        // Vérifier et exécuter les tâches
-        if (cached_tasks) {
-            for (size_t i = 0; i < cached_count && !g_stop; ++i) {
-                // Éviter les doubles exécutions dans la même minute
-                if (last_executed_minute && last_executed_minute[i] == current_minute_id) {
-                    continue;
-                }
-                
-                if (should_execute_task_simple(cached_tasks[i])) {
-                    // Le timestamp d'exécution est exactement à la seconde 0
-                    time_t exec_time = now;
-                    
-                    // Exécuter la tâche de manière asynchrone pour ne pas bloquer le thread
-                    task_exec_params_t *params = malloc(sizeof(task_exec_params_t));
-                    if (params) {
-                        params->run_dir = run_dir;
-                        params->task = cached_tasks[i];
-                        params->exec_timestamp = exec_time;
-                        
-                        pthread_t exec_thread;
-                        pthread_attr_t attr;
-                        pthread_attr_init(&attr);
-                        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-                        if (pthread_create(&exec_thread, &attr, async_task_executor, params) != 0) {
-                            free(params);
-                        }
-                        pthread_attr_destroy(&attr);
+        // Vérifier les tâches uniquement à la seconde 0 de chaque minute
+        // Éviter de vérifier plusieurs fois dans la même seconde
+        if (tm_now.tm_sec == 0 && tm_now.tm_sec != last_checked_second) {
+            last_checked_second = 0;
+            
+            // Calculer un identifiant unique pour la minute actuelle
+            int current_minute_id = tm_now.tm_year * 525600 + tm_now.tm_mon * 43200 + 
+                                    tm_now.tm_mday * 1440 + tm_now.tm_hour * 60 + tm_now.tm_min;
+            
+            // Vérifier et exécuter les tâches
+            if (cached_tasks) {
+                for (size_t i = 0; i < cached_count && !g_stop; ++i) {
+                    // Éviter les doubles exécutions dans la même minute
+                    if (last_executed_minute && last_executed_minute[i] == current_minute_id) {
+                        continue;
                     }
                     
-                    // Mémoriser l'exécution pour éviter les doubles exécutions
-                    if (last_executed_minute) {
-                        last_executed_minute[i] = current_minute_id;
+                    if (should_execute_task_simple(cached_tasks[i])) {
+                        // Le timestamp d'exécution est exactement à la seconde 0
+                        time_t exec_time = now;
+                        
+                        // Exécuter la tâche de manière asynchrone pour ne pas bloquer le thread
+                        task_exec_params_t *params = malloc(sizeof(task_exec_params_t));
+                        if (params) {
+                            params->run_dir = run_dir;
+                            params->task = cached_tasks[i];
+                            params->exec_timestamp = exec_time;
+                            
+                            pthread_t exec_thread;
+                            pthread_attr_t attr;
+                            pthread_attr_init(&attr);
+                            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+                            if (pthread_create(&exec_thread, &attr, async_task_executor, params) != 0) {
+                                free(params);
+                            }
+                            pthread_attr_destroy(&attr);
+                        }
+                        
+                        // Mémoriser l'exécution pour éviter les doubles exécutions
+                        if (last_executed_minute) {
+                            last_executed_minute[i] = current_minute_id;
+                        }
                     }
                 }
             }
+        } else if (tm_now.tm_sec != 0) {
+            // Réinitialiser le flag quand on n'est plus à la seconde 0
+            last_checked_second = tm_now.tm_sec;
         }
 
-        // Attendre jusqu'à la prochaine seconde 0 (début de la prochaine minute)
-        // Calculer le temps à attendre jusqu'à la prochaine minute
-        time_t next_check = time(NULL);
-        struct tm tm_next;
-        localtime_r(&next_check, &tm_next);
-        int secs_until_next_minute = 60 - tm_next.tm_sec;
-        
-        // Diviser le sleep en intervalles de 100ms pour vérifier g_stop fréquemment
-        int intervals = secs_until_next_minute * 10; // 10 intervalles de 100ms par seconde
-        for (int i = 0; i < intervals && !g_stop; i++) {
-            struct timespec ts;
-            ts.tv_sec = 0;
-            ts.tv_nsec = 100000000; // 100ms
-            nanosleep(&ts, NULL);
-        }
+        // Attendre 1ms avant la prochaine vérification (extrêmement fréquent pour meilleure précision avec valgrind)
+        struct timespec ts;
+        ts.tv_sec = 0;
+        ts.tv_nsec = 1000000; // 1ms (extrêmement fréquent pour valgrind)
+        nanosleep(&ts, NULL);
     }
     
     // Nettoyer
