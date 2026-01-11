@@ -8,6 +8,7 @@
 
 #define MAX_PATH_LEN 512
 
+// Attribution: Ahmed (T1.2)
 typedef struct {
     uint64_t taskid;
     timing_t timing;

@@ -7,6 +7,7 @@
 // Types
 
 // Timing
+// Attribution: AJINOU Abderrahman (T1.1)
 typedef struct {
     uint64_t minutes;
     uint32_t hours;
@@ -14,6 +15,7 @@ typedef struct {
 } timing_t;
 
 // Command
+// Attribution: AJINOU Abderrahman (T1.1)
 typedef struct command {
     uint16_t type;         
     /* commande simple */

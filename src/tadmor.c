@@ -77,6 +77,7 @@ static int parse_value_or_range(const char *s, int *start, int *end) {
 }
 
 // Parse une liste de valeurs/plages séparées par des virgules (ex: "0,3,6,9" ou "0-5,10-15")
+// Attribution: Pitel (T2.5) -> Ahmed Mouncef Chabira (T3.4)
 static int parse_list(const char *s, int max_value, uint64_t *bits_out) {
     if (!s || !bits_out) return -1;
     *bits_out = 0;
@@ -121,11 +122,13 @@ static int parse_list(const char *s, int max_value, uint64_t *bits_out) {
 }
 
 // Parse les minutes (0-59)
+// Attribution: Pitel (T2.5)
 static int parse_minutes(const char *s, uint64_t *minutes_out) {
     return parse_list(s, 59, minutes_out);
 }
 
 // Parse les heures (0-23)
+// Attribution: Pitel (T2.5)
 static int parse_hours(const char *s, uint32_t *hours_out) {
     uint64_t bits = 0;
     if (parse_list(s, 23, &bits) < 0) return -1;
@@ -134,6 +137,7 @@ static int parse_hours(const char *s, uint32_t *hours_out) {
 }
 
 // Parse les jours de la semaine (0-6)
+// Attribution: Pitel (T2.5)
 static int parse_days(const char *s, uint8_t *days_out) {
     uint64_t bits = 0;
     if (parse_list(s, 6, &bits) < 0) return -1;
@@ -142,7 +146,9 @@ static int parse_days(const char *s, uint8_t *days_out) {
 }
 
 //Format command line (support simple et sequence)
+// Attribution: Pitel (T2.6)
 static char *format_command_line_internal(const command_t *cmd, int top_level);
+// Attribution: Pitel (T2.6)
 static char *format_command_line(const command_t *cmd) {
     return format_command_line_internal(cmd, 1);
 }
@@ -494,6 +500,7 @@ static const char *errcode_to_str(uint16_t err) {
 }
 
 // Affiche la réponse LIST
+// Attribution: Pitel (T2.6)
 static void handle_list_response(const response_t *resp) {
     if (!resp) return;
     if (resp->anstype == ANSTYPE_ERROR) {
@@ -522,6 +529,7 @@ static void handle_list_response(const response_t *resp) {
 }
 
 // Affiche la réponse TIMES_EXITCODES
+// Attribution: Pitel (T2.6)
 static void handle_times_exitcodes_response(const response_t *resp) {
     if (!resp) return;
     if (resp->anstype == ANSTYPE_ERROR) {
@@ -555,6 +563,7 @@ static void handle_times_exitcodes_response(const response_t *resp) {
 }
 
 // Affiche la réponse STDOUT ou STDERR
+// Attribution: Pitel (T2.6)
 static void handle_output_response(const response_t *resp) {
     if (!resp) return;
     if (resp->anstype == ANSTYPE_ERROR) {
@@ -573,6 +582,7 @@ static void handle_output_response(const response_t *resp) {
     fwrite(out, 1, len, stdout);
 }
 
+// Attribution: Pitel (T2.5) -> Ahmed Mouncef Chabira (T3.4) -> Jeremy Pitel (T3.5)
 int main(int argc, char *argv[]) {
     int opt;
 

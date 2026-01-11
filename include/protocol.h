@@ -33,6 +33,7 @@
 // ============================================================================
 // Structure pour les requêtes (client -> démon)
 // ============================================================================
+// Attribution: AJINOU Abderrahman (T2.1) -> AJINOU Abderrahman (T3.1)
 typedef struct {
     uint16_t opcode;  // Code d'opération (OPCODE_*)
     union {
@@ -63,6 +64,7 @@ typedef struct {
 // ============================================================================
 // Structure pour les réponses (démon -> client)
 // ============================================================================
+// Attribution: AJINOU Abderrahman (T2.1) -> AJINOU Abderrahman (T3.1)
 typedef struct {
     uint16_t anstype;  // Type de réponse (ANSTYPE_OK ou ANSTYPE_ERROR)
     uint16_t opcode_used;  // Opcode utilisé pour créer cette réponse (0 si inconnu)

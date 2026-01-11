@@ -148,6 +148,7 @@ typedef struct {
 
 // Vérifie si une tâche doit être exécutée maintenant
 // (exécution strictement à la seconde 0 de chaque minute, comme cron)
+// Attribution: Abderrahman AJINOU (T1.11)
 static int should_execute_task_simple(const task_t *task) {
     if (!task) {
         return 0;
@@ -177,6 +178,7 @@ static int should_execute_task_simple(const task_t *task) {
 }
 
 // Thread pour l'exécution périodique des tâches (vérification multiple dans première seconde)
+// Attribution: Abderrahman AJINOU (T1.11)
 static void* task_execution_thread(void *arg) {
     const char *run_dir = (const char *)arg;
     time_t start_time = time(NULL);
@@ -363,10 +365,12 @@ static void* async_task_executor(void *arg) {
     return NULL;
 }
 
+// Attribution: Abderrahman AJINOU (T1.11)
 int execute_task(const char *run_dir, const task_t *task) {
     return execute_task_with_timestamp(run_dir, task, time(NULL));
 }
 
+// Attribution: Abderrahman AJINOU (T1.11)
 int execute_task_with_timestamp(const char *run_dir, const task_t *task, time_t exec_timestamp) {
     if (!run_dir || !task || !task->cmd) {
         DEBUG_LOG("[DEBUG] execute_task_with_timestamp: invalid parameters (run_dir=%p, task=%p)\n", 
@@ -440,6 +444,7 @@ int execute_task_with_timestamp(const char *run_dir, const task_t *task, time_t 
     return 0;
 }
 
+// Attribution: Ahmed (T2.4) -> Ahmed (T2.7) -> AJINOU Abderrahman (T2.8) -> AJINOU Abderrahman (T2.9) -> Jeremy Pitel (T3.3)
 static void handle_request(const char *run_dir, int request_fd, int *reply_fd_ptr) {
     int reply_fd = *reply_fd_ptr;
     request_t *req = NULL;
@@ -699,6 +704,7 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
     free_response(resp);
 }
 
+// Attribution: Abderrahman AJINOU (T1.11) -> Ahmed (T2.4)
 void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
     int maxfd = request_fd;
     
@@ -763,6 +769,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -h, --help    Afficher cette aide\n");
 }
 
+// Attribution: Abderrahman AJINOU (T1.11) -> Ahmed (T2.4) -> Jeremy Pitel (T3.3)
 int main(int argc, char **argv) {
     const char *run_dir = NULL;
     const char *pipes_dir_arg = NULL;

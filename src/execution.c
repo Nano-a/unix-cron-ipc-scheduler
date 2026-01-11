@@ -114,6 +114,7 @@ static int move_buffer_to_output(buffer_t *buf, char **out, size_t *out_len) {
     return 0;
 }
 
+// Attribution: Abderrahman AJINOU (T1.9)
 int execute_simple_command(const command_t *cmd,
                            char **stdout_buf, size_t *stdout_len,
                            char **stderr_buf, size_t *stderr_len,
@@ -224,6 +225,7 @@ cleanup:
     return result;
 }
 
+// Attribution: Pitel (T1.10)
 int execute_sequence_command(const command_t *cmd,
                              char **stdout_buf, size_t *stdout_len,
                              char **stderr_buf, size_t *stderr_len,

@@ -22,6 +22,7 @@
 // ----------------------
 
 // Écrit un uint8 (1 octet) - pas besoin de conversion endian
+// Attribution: Ahmed (T1.4)
 int write_uint8(int fd, uint8_t value) {
     ssize_t written = write(fd, &value, sizeof(uint8_t));
     if (written != sizeof(uint8_t)) return -1;
@@ -29,6 +30,7 @@ int write_uint8(int fd, uint8_t value) {
 }
 
 // Écrit un uint16 (2 octets) en big-endian
+// Attribution: Ahmed (T1.4)
 int write_uint16(int fd, uint16_t value) {
     uint16_t be_value = htobe16(value);
     ssize_t written = write(fd, &be_value, sizeof(uint16_t));
@@ -37,6 +39,7 @@ int write_uint16(int fd, uint16_t value) {
 }
 
 // Écrit un uint32 (4 octets) en big-endian
+// Attribution: Ahmed (T1.4)
 int write_uint32(int fd, uint32_t value) {
     uint32_t be_value = htobe32(value);
     ssize_t written = write(fd, &be_value, sizeof(uint32_t));
@@ -45,6 +48,7 @@ int write_uint32(int fd, uint32_t value) {
 }
 
 // Écrit un uint64 (8 octets) en big-endian
+// Attribution: Ahmed (T1.4)
 int write_uint64(int fd, uint64_t value) {
     uint64_t be_value = htobe64(value);
     ssize_t written = write(fd, &be_value, sizeof(uint64_t));
@@ -53,6 +57,7 @@ int write_uint64(int fd, uint64_t value) {
 }
 
 // Écrit un int64 (8 octets) en big-endian
+// Attribution: Ahmed (T1.4)
 int write_int64(int fd, int64_t value) {
     int64_t be_value = htobe64((uint64_t)value);
     ssize_t written = write(fd, &be_value, sizeof(int64_t));
@@ -65,6 +70,7 @@ int write_int64(int fd, int64_t value) {
 // ----------------------
 
 // Lit un uint8 (1 octet)
+// Attribution: Ahmed (T1.4)
 int read_uint8(int fd, uint8_t *value) {
     ssize_t rd = read(fd, value, sizeof(uint8_t));
     if (rd != sizeof(uint8_t)) return -1;
@@ -72,6 +78,7 @@ int read_uint8(int fd, uint8_t *value) {
 }
 
 // Lit un uint16 (2 octets) en big-endian
+// Attribution: Ahmed (T1.4)
 int read_uint16(int fd, uint16_t *value) {
     uint16_t tmp;
     ssize_t rd = read(fd, &tmp, sizeof(uint16_t));
@@ -89,6 +96,7 @@ int read_uint16(int fd, uint16_t *value) {
 }
 
 // Lit un uint32 (4 octets) en big-endian
+// Attribution: Ahmed (T1.4)
 int read_uint32(int fd, uint32_t *value) {
     uint32_t tmp;
     ssize_t rd = read(fd, &tmp, sizeof(uint32_t));
@@ -98,6 +106,7 @@ int read_uint32(int fd, uint32_t *value) {
 }
 
 // Lit un uint64 (8 octets) en big-endian
+// Attribution: Ahmed (T1.4)
 int read_uint64(int fd, uint64_t *value) {
     uint64_t tmp;
     ssize_t rd = read(fd, &tmp, sizeof(uint64_t));
@@ -107,6 +116,7 @@ int read_uint64(int fd, uint64_t *value) {
 }
 
 // Lit un int64 (8 octets) en big-endian
+// Attribution: Ahmed (T1.4)
 int read_int64(int fd, int64_t *value) {
     int64_t tmp;
     ssize_t rd = read(fd, &tmp, sizeof(int64_t));
@@ -174,6 +184,7 @@ static ssize_t robust_read(int fd, void *buf, size_t count) {
 // --------------------
 
 
+// Attribution: Pitel (T1.5)
 int write_string(int fd, const char *str) {
 
     if (!str) {
@@ -196,6 +207,7 @@ int write_string(int fd, const char *str) {
     return 0;
 }
 
+// Attribution: Pitel (T1.5)
 int read_string(int fd, char **out) {
     if (!out) {
         errno = EINVAL;
@@ -229,6 +241,7 @@ int read_string(int fd, char **out) {
 // Fonctions Timing
 // --------------------
 
+// Attribution: Pitel (T1.5)
 int write_timing(int fd, const timing_t *t) {
 
     if (!t) {
@@ -243,6 +256,7 @@ int write_timing(int fd, const timing_t *t) {
     return 0;
 }
 
+// Attribution: Pitel (T1.5)
 int read_timing(int fd, timing_t *t) {
 
     if (!t) {
@@ -261,6 +275,7 @@ int read_timing(int fd, timing_t *t) {
 // Fonctions Arguments
 // --------------------
 
+// Attribution: Pitel (T1.5)
 int write_arguments(int fd, uint32_t argc, char *argv[]) {
     if (argc < 1 || argv == NULL) {
         errno = EINVAL;
@@ -285,6 +300,7 @@ int write_arguments(int fd, uint32_t argc, char *argv[]) {
     return 0;
 }
 
+// Attribution: Pitel (T1.5)
 int read_arguments(int fd, uint32_t *argc_out, char ***argv_out) {
     if (!argc_out || !argv_out) {
         errno = EINVAL;
@@ -349,6 +365,7 @@ static int validate_type2(const char *type2) {
 }
 
 // Créer commande simple
+// Attribution: Pitel (T1.6)
 command_t *create_simple_command(const char *type2, uint32_t argc, char *argv[]) {
 
     if (!validate_type2(type2) || argc < 1 || argv == NULL) {
@@ -394,6 +411,7 @@ command_t *create_simple_command(const char *type2, uint32_t argc, char *argv[])
     return cmd;
 }
 
+// Attribution: Pitel (T1.6)
 command_t *create_sequence_command(const char *type2, uint32_t nb_cmds, command_t **cmds) {
 
     if (!validate_type2(type2) || nb_cmds == 0 || cmds == NULL) {
@@ -413,6 +431,7 @@ command_t *create_sequence_command(const char *type2, uint32_t nb_cmds, command_
 }
 
 // Libération récursive
+// Attribution: Pitel (T1.6)
 void free_command(command_t *cmd) {
     if (!cmd) return;
 
@@ -470,6 +489,7 @@ static int validate_command_layout(const command_t *cmd) {
     return 1;
 }
 
+// Attribution: Pitel (T1.6)
 int write_command(int fd, const command_t *cmd) {
     if (!validate_command_layout(cmd)) {
         return -1;
@@ -517,6 +537,7 @@ static void clean_partial_children(command_t **children, uint32_t count) {
     free(children);
 }
 
+// Attribution: Pitel (T1.6)
 int read_command(int fd, command_t **cmd_out) {
     if (!cmd_out) {
         errno = EINVAL;

@@ -49,6 +49,7 @@ int create_dir_recursive(char *path, mode_t mode) {
 // -------------------------------------------------------------------
 // Crée récursivement le répertoire de base des tâches
 // -------------------------------------------------------------------
+// Attribution: Ahmed (T1.2)
 int init_task_directory(const char *orig_path) {
     char path[512];
     strncpy(path, orig_path, sizeof(path));
@@ -62,6 +63,7 @@ int init_task_directory(const char *orig_path) {
 // Exemple : build_task_dir_path(path, 512, "/tmp/user", 5)
 //  → "/tmp/user/erraid/tasks/5"
 // -------------------------------------------------------------------
+// Attribution: Ahmed (T1.2)
 int build_task_dir_path(char *path, size_t path_size, const char *run_dir, uint64_t taskid) {
     int result = snprintf(path, path_size, "%s/tasks/%lu", run_dir, taskid);
     if (result < 0 || result >= (int)path_size) {
@@ -75,6 +77,7 @@ int build_task_dir_path(char *path, size_t path_size, const char *run_dir, uint6
 // Exemple : build_task_path(path, 512, "/tmp/user", 5, "timing")
 //  → "/tmp/user/erraid/tasks/5/timing"
 // -------------------------------------------------------------------
+// Attribution: Ahmed (T1.2)
 int build_task_path(char *path, size_t path_size, const char *run_dir,
                     uint64_t taskid, const char *filename) {
     int result = snprintf(path, path_size, "%s/tasks/%lu/%s",
@@ -315,6 +318,7 @@ static int save_command_to_dir(const char *cmd_dir, const command_t *cmd) {
     return 0;
 }
 
+// Attribution: Ahmed (T1.7)
 int load_task_from_dir(const char *run_dir, uint64_t taskid, task_t **task_out) {
     if (!run_dir || !task_out) {
         errno = EINVAL;
@@ -373,6 +377,7 @@ error:
     return -1;
 }
 
+// Attribution: Ahmed (T1.8)
 int save_task_to_dir(const char *run_dir, const task_t *task) {
     if (!run_dir || !task || !task->cmd) {
         errno = EINVAL;
@@ -428,6 +433,7 @@ void free_task(task_t *task) {
     free(task);
 }
 
+// Attribution: Pitel (T1.12)
 int append_execution_log(const char *run_dir, uint64_t taskid, int64_t timestamp, uint16_t exitcode) {
     char path[MAX_PATH_LEN];
     if (build_task_path(path, sizeof(path), run_dir, taskid, "times-exitcodes") < 0) {
@@ -471,15 +477,18 @@ static int save_stream_file(const char *run_dir, uint64_t taskid,
     return close(fd);
 }
 
+// Attribution: Pitel (T1.12)
 int save_stdout(const char *run_dir, uint64_t taskid, const char *output, size_t len) {
     return save_stream_file(run_dir, taskid, "stdout", output ? output : "", output ? len : 0);
 }
 
+// Attribution: Pitel (T1.12)
 int save_stderr(const char *run_dir, uint64_t taskid, const char *output, size_t len) {
     return save_stream_file(run_dir, taskid, "stderr", output ? output : "", output ? len : 0);
 }
 
 
+// Attribution: AJINOU Abderrahman (T2.8)
 int read_execution_logs(const char *run_dir, uint64_t taskid,
                         int64_t **timestamps_out, uint16_t **exitcodes_out,
                         uint32_t *nbruns_out) {
@@ -636,10 +645,12 @@ static int read_stream_file(const char *run_dir, uint64_t taskid,
     return 0;
 }
 
+// Attribution: AJINOU Abderrahman (T2.9)
 int read_stdout(const char *run_dir, uint64_t taskid, char **output_out, size_t *len_out) {
     return read_stream_file(run_dir, taskid, "stdout", output_out, len_out);
 }
 
+// Attribution: AJINOU Abderrahman (T2.9)
 int read_stderr(const char *run_dir, uint64_t taskid, char **output_out, size_t *len_out) {
     return read_stream_file(run_dir, taskid, "stderr", output_out, len_out);
 }
@@ -658,6 +669,7 @@ static int is_number(const char *name) {
 }
 
 // Génère un ID unique pour une nouvelle tâche
+// Attribution: Ahmed Mouncef Chabira (T3.2)
 uint64_t generate_task_id(const char *run_dir) {
     char tasks_dir[MAX_PATH_LEN];
     int len = snprintf(tasks_dir, sizeof(tasks_dir), "%s/tasks", run_dir);
@@ -698,6 +710,7 @@ uint64_t generate_task_id(const char *run_dir) {
 }
 
 // Supprime une tâche et tous ses fichiers
+// Attribution: Ahmed Mouncef Chabira (T3.2)
 int remove_task(const char *run_dir, uint64_t taskid) {
     char task_dir[MAX_PATH_LEN];
     if (build_task_dir_path(task_dir, sizeof(task_dir), run_dir, taskid) < 0) {
@@ -742,6 +755,7 @@ int remove_task(const char *run_dir, uint64_t taskid) {
 }
 
 // Combine plusieurs tâches en une nouvelle tâche
+// Attribution: Ahmed Mouncef Chabira (T3.2)
 int combine_tasks(const char *run_dir, uint64_t *taskids, uint32_t nbtasks, uint16_t combine_type, timing_t *timing, uint64_t *new_taskid_out) {
     if (!run_dir || !taskids || nbtasks == 0 || !timing || !new_taskid_out) {
         errno = EINVAL;

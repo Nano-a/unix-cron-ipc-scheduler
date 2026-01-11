@@ -65,6 +65,7 @@ static int create_fifo_if_needed(const char *path) {
  * @param run_dir Répertoire de base (ex: /tmp/$USER/erraid)
  * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
  */
+// Attribution: Ahmed (T2.2)
 int init_pipes(const char *run_dir) {
     if (!run_dir) {
         errno = EINVAL;
@@ -100,6 +101,7 @@ int init_pipes(const char *run_dir) {
  * @param reply_fd_out   Pointeur qui recevra le descripteur d'écriture des réponses
  * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
  */
+// Attribution: Ahmed (T2.2)
 int open_pipes_daemon(const char *run_dir, int *request_fd_out, int *reply_fd_out) {
     if (!run_dir || !request_fd_out || !reply_fd_out) {
         errno = EINVAL;
@@ -147,6 +149,7 @@ int open_pipes_daemon(const char *run_dir, int *request_fd_out, int *reply_fd_ou
  * @param reply_fd_out   Pointeur qui recevra le descripteur de lecture des réponses
  * @return 0 en cas de succès, -1 en cas d'erreur (errno positionné)
  */
+// Attribution: Ahmed (T2.2)
 int open_pipes_client(const char *run_dir, int *request_fd_out, int *reply_fd_out) {
     if (!run_dir || !request_fd_out || !reply_fd_out) {
         errno = EINVAL;
@@ -240,6 +243,7 @@ static int write_command_list_format(int fd, const command_t *cmd);
 static int read_command_list_format(int fd, command_t **cmd_out);
 
 //send/receive request
+// Attribution: Pitel (T2.3) -> AJINOU Abderrahman (T3.1)
 int send_request(int fd, const request_t *req) {
     if (!req) { errno = EINVAL; return -1; }
 
@@ -277,6 +281,7 @@ int send_request(int fd, const request_t *req) {
     }
 }
 
+// Attribution: Pitel (T2.3) -> AJINOU Abderrahman (T3.1)
 int receive_request(int fd, request_t **req_out) {
     if (!req_out) { errno = EINVAL; return -1; }
 
@@ -337,6 +342,7 @@ fail:
 }
 
 
+// Attribution: Pitel (T2.3) -> AJINOU Abderrahman (T3.1)
 int send_response(int fd, const response_t *resp) {
     if (!resp) { errno = EINVAL; return -1; }
 
@@ -583,6 +589,7 @@ static int read_command_list_format(int fd, command_t **cmd_out) {
     return 0;
 }
 
+// Attribution: Pitel (T2.3) -> AJINOU Abderrahman (T3.1)
 int receive_response(int fd, response_t **resp_out, uint16_t opcode) {
     if (!resp_out) { errno = EINVAL; return -1; }
 
@@ -742,6 +749,7 @@ fail:
 }
 
 //free
+// Attribution: Pitel (T2.3) -> AJINOU Abderrahman (T3.1)
 void free_request(request_t *req) {
     if (!req) return;
     
@@ -765,6 +773,7 @@ void free_request(request_t *req) {
     free(req);
 }
 
+// Attribution: Pitel (T2.3) -> AJINOU Abderrahman (T3.1)
 void free_response(response_t *resp) {
     if (!resp) return;
 
