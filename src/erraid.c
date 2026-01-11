@@ -301,9 +301,16 @@ static void* task_execution_thread(void *arg) {
             }
         }
 
-        // Utiliser nanosleep avec vérification périodique de g_stop pour arrêt rapide
-        // Diviser le sleep en 10 intervalles de 100ms pour réagir rapidement à g_stop
-        for (int i = 0; i < 10 && !g_stop; i++) {
+        // Attendre jusqu'à la prochaine seconde 0 (début de la prochaine minute)
+        // Calculer le temps à attendre jusqu'à la prochaine minute
+        time_t next_check = time(NULL);
+        struct tm tm_next;
+        localtime_r(&next_check, &tm_next);
+        int secs_until_next_minute = 60 - tm_next.tm_sec;
+        
+        // Diviser le sleep en intervalles de 100ms pour vérifier g_stop fréquemment
+        int intervals = secs_until_next_minute * 10; // 10 intervalles de 100ms par seconde
+        for (int i = 0; i < intervals && !g_stop; i++) {
             struct timespec ts;
             ts.tv_sec = 0;
             ts.tv_nsec = 100000000; // 100ms
