@@ -230,7 +230,7 @@ static void* task_execution_thread(void *arg) {
     
     int iteration = 0;
     const int MAX_ITERATIONS = 1000000; // Limite pour éviter boucle infinie
-    int last_checked_second = -1;
+    int last_checked_minute_id = -1;
     
     while (!g_stop && iteration < MAX_ITERATIONS) {
         iteration++;
@@ -239,74 +239,98 @@ static void* task_execution_thread(void *arg) {
         localtime_r(&now, &tm_now);
         
         // Recharger les tâches périodiquement pour détecter les nouvelles tâches
-        if (iteration % 600 == 0 && !g_stop) { // Toutes les 60 secondes (600 x 100ms)
+        // Avec un sleep de 1ms, 60000 itérations = 60 secondes
+        // Ne pas recharger à la seconde 0 pour éviter d'interférer avec l'exécution
+        if (iteration % 60000 == 0 && tm_now.tm_sec != 0 && !g_stop) { // Toutes les 60 secondes, sauf à la seconde 0
+            // Sauvegarder l'ancien état AVANT de libérer
+            int *old_last_executed = last_executed_minute;
+            size_t old_count = cached_count;
+            
             if (cached_tasks) {
                 free_task_array(cached_tasks, cached_count);
-                free(last_executed_minute);
                 cached_tasks = NULL;
                 cached_count = 0;
-                last_executed_minute = NULL;
             }
+            last_executed_minute = NULL; // Temporairement NULL
+            
             if (!g_stop && load_all_tasks(run_dir, &cached_tasks, &cached_count) == 0) {
                 if (!g_stop) {
-                    last_executed_minute = calloc(cached_count, sizeof(int));
-                    if (last_executed_minute) {
-                        for (size_t i = 0; i < cached_count; i++) {
-                            last_executed_minute[i] = -1;
+                    // Si le nombre de tâches est le même, réutiliser l'ancien tableau
+                    if (old_count == cached_count && old_last_executed) {
+                        last_executed_minute = old_last_executed;
+                    } else {
+                        // Sinon, réallouer
+                        if (old_last_executed) {
+                            free(old_last_executed);
+                        }
+                        last_executed_minute = calloc(cached_count, sizeof(int));
+                        if (last_executed_minute) {
+                            for (size_t i = 0; i < cached_count; i++) {
+                                last_executed_minute[i] = -1;
+                            }
                         }
                     }
                 }
+            } else if (old_last_executed) {
+                // Si le rechargement a échoué, restaurer
+                last_executed_minute = old_last_executed;
             }
         }
         
         // Vérifier les tâches uniquement à la seconde 0 de chaque minute
-        // Éviter de vérifier plusieurs fois dans la même seconde
-        if (tm_now.tm_sec == 0 && tm_now.tm_sec != last_checked_second) {
-            last_checked_second = 0;
-            
+        // Éviter de vérifier plusieurs fois dans la même minute
+        if (tm_now.tm_sec == 0) {
             // Calculer un identifiant unique pour la minute actuelle
             int current_minute_id = tm_now.tm_year * 525600 + tm_now.tm_mon * 43200 + 
                                     tm_now.tm_mday * 1440 + tm_now.tm_hour * 60 + tm_now.tm_min;
             
-            // Vérifier et exécuter les tâches
-            if (cached_tasks) {
-                for (size_t i = 0; i < cached_count && !g_stop; ++i) {
-                    // Éviter les doubles exécutions dans la même minute
-                    if (last_executed_minute && last_executed_minute[i] == current_minute_id) {
-                        continue;
-                    }
-                    
-                    if (should_execute_task_simple(cached_tasks[i])) {
-                        // Le timestamp d'exécution est exactement à la seconde 0
-                        time_t exec_time = now;
-                        
-                        // Exécuter la tâche de manière asynchrone pour ne pas bloquer le thread
-                        task_exec_params_t *params = malloc(sizeof(task_exec_params_t));
-                        if (params) {
-                            params->run_dir = run_dir;
-                            params->task = cached_tasks[i];
-                            params->exec_timestamp = exec_time;
-                            
-                            pthread_t exec_thread;
-                            pthread_attr_t attr;
-                            pthread_attr_init(&attr);
-                            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-                            if (pthread_create(&exec_thread, &attr, async_task_executor, params) != 0) {
-                                free(params);
-                            }
-                            pthread_attr_destroy(&attr);
+            // Vérifier seulement si on n'a pas déjà vérifié cette minute
+            if (last_checked_minute_id != current_minute_id) {
+                last_checked_minute_id = current_minute_id;
+                
+                // Vérifier et exécuter les tâches
+                if (cached_tasks) {
+                    for (size_t i = 0; i < cached_count && !g_stop; ++i) {
+                        // Éviter les doubles exécutions dans la même minute
+                        if (last_executed_minute && last_executed_minute[i] == current_minute_id) {
+                            continue;
                         }
                         
-                        // Mémoriser l'exécution pour éviter les doubles exécutions
-                        if (last_executed_minute) {
-                            last_executed_minute[i] = current_minute_id;
+                        if (should_execute_task_simple(cached_tasks[i])) {
+                            // Le timestamp d'exécution est exactement à la seconde 0
+                            time_t exec_time = now;
+                            
+                            // Exécuter la tâche de manière asynchrone pour ne pas bloquer le thread
+                            task_exec_params_t *params = malloc(sizeof(task_exec_params_t));
+                            if (params) {
+                                params->run_dir = run_dir;
+                                params->task = cached_tasks[i];
+                                params->exec_timestamp = exec_time;
+                                
+                                pthread_t exec_thread;
+                                pthread_attr_t attr;
+                                pthread_attr_init(&attr);
+                                pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+                                if (pthread_create(&exec_thread, &attr, async_task_executor, params) != 0) {
+                                    free(params);
+                                }
+                                pthread_attr_destroy(&attr);
+                            }
+                            
+                            // Mémoriser l'exécution pour éviter les doubles exécutions
+                            if (last_executed_minute) {
+                                last_executed_minute[i] = current_minute_id;
+                            }
                         }
                     }
                 }
             }
-        } else if (tm_now.tm_sec != 0) {
+        } else {
             // Réinitialiser le flag quand on n'est plus à la seconde 0
-            last_checked_second = tm_now.tm_sec;
+            // Cela permet de vérifier à nouveau à la prochaine seconde 0
+            if (last_checked_minute_id >= 0) {
+                last_checked_minute_id = -1;
+            }
         }
 
         // Attendre 1ms avant la prochaine vérification (extrêmement fréquent pour meilleure précision avec valgrind)
