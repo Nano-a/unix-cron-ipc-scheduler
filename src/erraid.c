@@ -201,13 +201,27 @@ static void* task_execution_thread(void *arg) {
         }
     }
     
-    // Vérifier immédiatement si on est à la seconde 0
-    if (tm_start.tm_sec == 0 && cached_tasks) {
-        int start_minute_id = tm_start.tm_year * 525600 + tm_start.tm_mon * 43200 + 
+    // Vérifier immédiatement si on est à la seconde 0 ou 1 (fenêtre de tolérance pour valgrind)
+    if ((tm_start.tm_sec == 0 || tm_start.tm_sec == 1) && cached_tasks) {
+        int start_minute_id;
+        time_t exec_time;
+        
+        if (tm_start.tm_sec == 1) {
+            // On est à la seconde 1, vérifier la minute précédente (seconde 0)
+            struct tm tm_zero = tm_start;
+            tm_zero.tm_sec = 0;
+            exec_time = mktime(&tm_zero);
+            start_minute_id = tm_zero.tm_year * 525600 + tm_zero.tm_mon * 43200 + 
+                             tm_zero.tm_mday * 1440 + tm_zero.tm_hour * 60 + tm_zero.tm_min;
+        } else {
+            // On est à la seconde 0, utiliser la minute actuelle
+            start_minute_id = tm_start.tm_year * 525600 + tm_start.tm_mon * 43200 + 
                              tm_start.tm_mday * 1440 + tm_start.tm_hour * 60 + tm_start.tm_min;
+            exec_time = start_time;
+        }
+        
         for (size_t i = 0; i < cached_count && !g_stop; ++i) {
             if (should_execute_task_simple(cached_tasks[i])) {
-                time_t exec_time = start_time;
                 execute_task_with_timestamp(run_dir, cached_tasks[i], exec_time);
                 if (last_executed_minute) {
                     last_executed_minute[i] = start_minute_id;
@@ -241,9 +255,9 @@ static void* task_execution_thread(void *arg) {
         localtime_r(&now, &tm_now);
         
         // Recharger les tâches périodiquement pour détecter les nouvelles tâches
-        // Avec un sleep de 1ms, 60000 itérations = 60 secondes
+        // Avec un sleep de 10ms, 6000 itérations = 60 secondes
         // Ne pas recharger à la seconde 0 pour éviter d'interférer avec l'exécution
-        if (iteration % 60000 == 0 && tm_now.tm_sec != 0 && !g_stop) { // Toutes les 60 secondes, sauf à la seconde 0
+        if (iteration % 6000 == 0 && tm_now.tm_sec != 0 && !g_stop) { // Toutes les 60 secondes, sauf à la seconde 0
             // Sauvegarder l'ancien état AVANT de libérer
             int *old_last_executed = last_executed_minute;
             size_t old_count = cached_count;
@@ -279,12 +293,29 @@ static void* task_execution_thread(void *arg) {
             }
         }
         
-        // Vérifier les tâches uniquement à la seconde 0 de chaque minute
-        // Éviter de vérifier plusieurs fois dans la même minute
-        if (tm_now.tm_sec == 0) {
+        // Vérifier les tâches à la seconde 0 de chaque minute
+        // Fenêtre de tolérance : seconde 0 ou 1 (pour valgrind qui ralentit l'exécution)
+        // Cela permet de "rattraper" les exécutions manquées si on arrive légèrement en retard
+        if (tm_now.tm_sec == 0 || tm_now.tm_sec == 1) {
             // Calculer un identifiant unique pour la minute actuelle
-            int current_minute_id = tm_now.tm_year * 525600 + tm_now.tm_mon * 43200 + 
+            // Si on est à la seconde 1, on vérifie la minute précédente (celle qu'on a peut-être ratée)
+            int current_minute_id;
+            time_t exec_time;
+            
+            if (tm_now.tm_sec == 1) {
+                // On est à la seconde 1, vérifier la minute précédente (seconde 0)
+                // Calculer le timestamp de la seconde 0 de la minute actuelle
+                struct tm tm_zero = tm_now;
+                tm_zero.tm_sec = 0;
+                exec_time = mktime(&tm_zero);
+                current_minute_id = tm_zero.tm_year * 525600 + tm_zero.tm_mon * 43200 + 
+                                    tm_zero.tm_mday * 1440 + tm_zero.tm_hour * 60 + tm_zero.tm_min;
+            } else {
+                // On est à la seconde 0, utiliser la minute actuelle
+                current_minute_id = tm_now.tm_year * 525600 + tm_now.tm_mon * 43200 + 
                                     tm_now.tm_mday * 1440 + tm_now.tm_hour * 60 + tm_now.tm_min;
+                exec_time = now;
+            }
             
             // Vérifier seulement si on n'a pas déjà vérifié cette minute
             if (last_checked_minute_id != current_minute_id) {
@@ -299,9 +330,6 @@ static void* task_execution_thread(void *arg) {
                         }
                         
                         if (should_execute_task_simple(cached_tasks[i])) {
-                            // Le timestamp d'exécution est exactement à la seconde 0
-                            time_t exec_time = now;
-                            
                             // Exécuter la tâche de manière asynchrone pour ne pas bloquer le thread
                             task_exec_params_t *params = malloc(sizeof(task_exec_params_t));
                             if (params) {
@@ -328,17 +356,18 @@ static void* task_execution_thread(void *arg) {
                 }
             }
         } else {
-            // Réinitialiser le flag quand on n'est plus à la seconde 0
+            // Réinitialiser le flag quand on est au-delà de la fenêtre de tolérance (seconde 2+)
             // Cela permet de vérifier à nouveau à la prochaine seconde 0
-            if (last_checked_minute_id >= 0) {
+            if (last_checked_minute_id >= 0 && tm_now.tm_sec >= 2) {
                 last_checked_minute_id = -1;
             }
         }
 
-        // Attendre 1ms avant la prochaine vérification (extrêmement fréquent pour meilleure précision avec valgrind)
+        // Attendre 10ms avant la prochaine vérification
+        // Assez fréquent pour ne pas rater la seconde 0, mais pas trop pour éviter de surcharger le CPU
         struct timespec ts;
         ts.tv_sec = 0;
-        ts.tv_nsec = 1000000; // 1ms (extrêmement fréquent pour valgrind)
+        ts.tv_nsec = 10000000; // 10ms (bon compromis entre précision et performance)
         nanosleep(&ts, NULL);
     }
     
@@ -649,9 +678,9 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
         if (len >= 0 && len < (int)sizeof(reply_path)) {
             // Essayer d'ouvrir en O_WRONLY (écriture seule) avec retry
             // Le client doit avoir ouvert le tube en lecture avant que nous puissions l'ouvrir en écriture
-            // Augmenter le timeout pour valgrind qui ralentit l'exécution
+            // Augmenter le timeout pour valgrind qui ralentit considérablement l'exécution
             int attempts = 0;
-            const int max_attempts = 5000; // 5000 * 1ms = 5 secondes (augmenté pour valgrind)
+            const int max_attempts = 10000; // 10000 * 1ms = 10 secondes (augmenté pour valgrind)
             while (attempts < max_attempts) {
                 reply_fd = open(reply_path, O_WRONLY | O_NONBLOCK);
                 if (reply_fd >= 0) {

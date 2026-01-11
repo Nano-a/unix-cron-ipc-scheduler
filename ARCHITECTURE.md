@@ -107,7 +107,7 @@ Toutes les données sont sérialisées en **big-endian** (format réseau) :
 
 ```
 "Hello" → [00 00 00 05] [48 65 6c 6c 6f]
-         └─ longueur ─┘ └─── données ───┘
+          └ longueur ─┘ └─── données ──┘
 ```
 
 ### Exemple : Sérialisation d'un Timing
@@ -118,7 +118,7 @@ hours=0x00000001 (heure 0)
 daysofweek=0x01 (dimanche)
 
 → [00 00 00 00 00 00 00 01] [00 00 00 01] [01]
-  └────── minutes ──────┘ └── hours ──┘ └dow┘
+  └────── minutes ────────┘ └── hours ──┘ └dow┘
 ```
 
 **Voir** : `sy5-2025-2026/Projet/serialisation.md` pour le format complet.
@@ -135,20 +135,20 @@ Le démon `erraid` utilise une architecture **multithread** :
 ┌─────────────────────────────────────┐
 │         Processus Principal         │
 │                                     │
-│  ┌───────────────────────────────┐ │
-│  │   Thread d'Exécution         │ │
+│  ┌────────────────────────────────┐ │
+│  │   Thread d'Exécution           │ │
 │  │   (vérifie toutes les secondes)│ │
-│  └───────────────────────────────┘ │
+│  └────────────────────────────────┘ │
 │                                     │
-│  ┌───────────────────────────────┐ │
-│  │   Boucle Principale            │ │
-│  │   (select() pour requêtes)     │ │
-│  └───────────────────────────────┘ │
+│  ┌───────────────────────────────┐  │
+│  │   Boucle Principale           │  │
+│  │   (select() pour requêtes)    │  │
+│  └───────────────────────────────┘  │
 │                                     │
-│  ┌───────────────────────────────┐ │
-│  │   Threads d'Exécution         │ │
-│  │   (une par tâche, asynchrone) │ │
-│  └───────────────────────────────┘ │
+│  ┌───────────────────────────────┐  │
+│  │   Threads d'Exécution         │  │
+│  │   (une par tâche, asynchrone) │  │
+│  └───────────────────────────────┘  │
 └─────────────────────────────────────┘
 ```
 

@@ -171,7 +171,7 @@ bash run-tadmor-tests-jalon-2.sh
 
 **Résultat attendu :**
 ```
-Client: all tests passed
+Jalon 2 (client) : 14/14 tests réussis, 0 échecs
 ```
 
 **Explication du résultat :**
@@ -180,7 +180,7 @@ Client: all tests passed
 - Tous les tests doivent passer pour valider le Jalon 2 (client).
 - Les tests vérifient le format des requêtes et des réponses.
 
-**Ce qui est testé :**
+**Ce qui est testé (14 tests) :**
 - Requête `LIST` (liste vide et avec tâches)
 - Requête `TIMES_EXITCODES` (tâche exécutée, jamais exécutée, inexistante)
 - Requête `STDOUT` (avec contenu, vide, jamais exécutée, inexistante)
@@ -189,6 +189,8 @@ Client: all tests passed
 - Gestion des erreurs (`NOT_FOUND`, `NOT_RUN`)
 - Format de sérialisation des requêtes et réponses
 - Communication via FIFO (pipes nommés)
+- Tests avec grandes sorties (200 KB)
+- Tests avec valgrind (détection de fuites mémoire)
 
 #### Tests `erraid` (démon)
 
@@ -204,8 +206,29 @@ python3 run-erraid-tests-jalon-2.py
 
 **Résultat attendu :**
 ```
-Jalon 2 : 11/11 tests réussis, 0 échecs
+Jalon 2 (démon) : 16/16 tests réussis, 0 échecs
 ```
+
+**Explication du résultat :**
+- Les tests du professeur démarrent automatiquement le démon avec des requêtes enregistrées.
+- Chaque test vérifie une fonctionnalité spécifique du protocole de communication.
+- Tous les tests doivent passer pour valider le Jalon 2 (démon).
+- Les tests vérifient que le démon répond correctement aux requêtes et ferme les pipes.
+
+**Ce qui est testé (16 tests) :**
+- Requête `CREATE` (tâche simple, avec timing, abstraite)
+- Requête `LIST` (liste vide, avec tâches, ordre quelconque)
+- Requête `COMBINE` (séquences, pipelines, conditionnelles)
+- Requête `REMOVE` (suppression réussie, tâche inexistante)
+- Requête `TIMES_EXITCODES` (tâche exécutée, jamais exécutée, inexistante)
+- Requête `STDOUT` (avec contenu, vide, jamais exécutée, inexistante)
+- Requête `STDERR` (avec contenu, vide, jamais exécutée, inexistante)
+- Requête `TERMINATE` (arrêt du démon)
+- Gestion des erreurs (`NOT_FOUND`, `NOT_RUN`)
+- Format de sérialisation des réponses
+- Fermeture correcte des pipes de réponse
+- Tests avec valgrind (détection de fuites mémoire)
+- Tests avec grandes sorties (200 KB)
 
 **Explication du résultat :**
 - Les tests du professeur démarrent automatiquement le démon.
@@ -5166,24 +5189,40 @@ X: - - - ( ( echo hello | tr a-z A-Z ) ; echo after )
 ✅ **Persistance** : Les tâches sont sauvegardées et rechargées au démarrage
 ✅ **Protocole** : Tous les opcodes et codes d'erreur sont implémentés
 ✅ **Exemple du prof** : La conditionnelle complexe avec pipeline dans then fonctionne
+✅ **Gestion des processus** : Aucun processus zombie, tous les processus sont correctement attendus
+✅ **Timing précis** : Vérification toutes les 10ms pour ne pas rater la seconde 0
+✅ **Support valgrind** : Timeout augmenté pour les tests avec valgrind
 
 ### Tests du professeur
 
-✅ **Jalon 1** : 12/12 tests réussis
-✅ **Jalon 2** : 11/11 tests réussis (tadmor) + 11/11 tests réussis (erraid)
+✅ **Jalon 1** : 12/12 tests réussis (100%)
+✅ **Jalon 2 (client tadmor)** : 14/14 tests réussis (100%)
+✅ **Jalon 2 (démon erraid)** : 16/16 tests réussis (100%)
+
+**Total : 42/42 tests réussis (100%)**
+
+**Note importante :** Les tests sont maintenant complets avec :
+- Jalon 1 : 12 tests (incluant valgrind)
+- Jalon 2 client : 14 tests (nouveaux tests Python)
+- Jalon 2 démon : 16 tests (incluant valgrind et tests de grandes sorties)
 
 ---
 
 ## Conclusion
 
-Ce guide couvre tous les cas d'utilisation possibles du projet erraid-tadmor avec des explications détaillées pour chaque résultat attendu. Tous les tests du professeur (Jalon 1 et Jalon 2) passent avec succès. Le projet est conforme aux spécifications du dépôt du professeur et est prêt pour la présentation devant les jurys.
+Ce guide couvre tous les cas d'utilisation possibles du projet erraid-tadmor avec des explications détaillées pour chaque résultat attendu. Tous les tests du professeur (Jalon 1 et Jalon 2) passent avec succès à 100%. Le projet est conforme aux spécifications du dépôt du professeur et est prêt pour la présentation devant les jurys.
 
 **Points clés pour la présentation :**
-- Tous les formats d'affichage sont corrects selon les règles du prof
-- Tous les cas d'erreur retournent des messages précis
-- La persistance fonctionne correctement
-- Les combinaisons complexes (imbriquées) sont supportées
-- L'exemple du prof avec conditionnelle et pipeline fonctionne parfaitement
+- ✅ Tous les formats d'affichage sont corrects selon les règles du prof
+- ✅ Tous les cas d'erreur retournent des messages précis
+- ✅ La persistance fonctionne correctement
+- ✅ Les combinaisons complexes (imbriquées) sont supportées
+- ✅ L'exemple du prof avec conditionnelle et pipeline fonctionne parfaitement
+- ✅ Aucun processus zombie : tous les processus créés sont correctement attendus avec `waitpid()`
+- ✅ Gestion robuste des erreurs : tous les chemins d'erreur nettoient les processus enfants
+- ✅ Timing précis : vérification toutes les 10ms (100 fois par seconde) pour ne pas rater la seconde 0
+- ✅ Support valgrind : timeout augmenté à 10 secondes pour les tests avec valgrind
+- ✅ Options compatibles : support des nouvelles options `-R`, `-P`, `-F` et des anciennes `-r`, `-p` pour compatibilité
 
 ---
 
@@ -6109,11 +6148,12 @@ cd /home/ajinou/Bureau/Projet\ System/projet-systeme-l3
 ```
 
 **Explication :**
-- Le démon vérifie toutes les secondes quelles tâches doivent être exécutées.
+- Le démon vérifie toutes les 10ms quelles tâches doivent être exécutées (100 vérifications par seconde).
 - À la seconde 0 de chaque minute, le démon exécute les tâches éligibles.
 - Le démon crée un processus enfant avec `fork()`.
 - Le processus enfant exécute la commande avec `execvp()`.
-- Le démon attend la fin du processus enfant avec `waitpid()`.
+- Le démon attend la fin du processus enfant avec `waitpid()` pour éviter les processus zombies.
+- **Important :** Tous les processus créés sont toujours attendus, même en cas d'erreur, pour éviter les zombies.
 - Le démon enregistre le code de retour et les sorties.
 
 **Terminal 2 : Vérifier l'historique immédiatement après**

@@ -151,7 +151,8 @@ int execute_simple_command(const command_t *cmd,
         return -1;
     }
 
-    pid_t pid = fork();
+    pid_t pid = -1;  // Initialiser à -1 pour indiquer qu'aucun processus n'a été créé
+    pid = fork();
     if (pid < 0) {
         close_pipe(stdout_pipe);
         close_pipe(stderr_pipe);
@@ -187,20 +188,39 @@ int execute_simple_command(const command_t *cmd,
     buffer_init(&err_buf);
 
     int result = -1;
+    int child_waited = 0;  // Flag pour indiquer si le processus a été attendu
+    int pipes_closed = 0;  // Flag pour indiquer si les pipes de lecture sont fermés
+    
     if (read_fd_into_buffer(stdout_pipe[0], &out_buf) < 0) {
+        // Fermer les pipes avant cleanup pour éviter que l'enfant reste bloqué
+        close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
+        pipes_closed = 1;
         goto cleanup;
     }
     if (read_fd_into_buffer(stderr_pipe[0], &err_buf) < 0) {
+        // Fermer les pipes avant cleanup pour éviter que l'enfant reste bloqué
+        close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
+        pipes_closed = 1;
         goto cleanup;
     }
 
     close(stdout_pipe[0]);
     close(stderr_pipe[0]);
+    pipes_closed = 1;
 
     int status;
-    if (waitpid(pid, &status, 0) < 0) {
+    // Réessayer en cas d'interruption (EINTR)
+    pid_t waited_pid;
+    do {
+        waited_pid = waitpid(pid, &status, 0);
+    } while (waited_pid < 0 && errno == EINTR);
+    
+    if (waited_pid < 0) {
         goto cleanup;
     }
+    child_waited = 1;  // Marquer comme attendu
 
     if (WIFEXITED(status)) {
         *exitcode = (uint16_t)WEXITSTATUS(status);
@@ -220,6 +240,25 @@ int execute_simple_command(const command_t *cmd,
     result = 0;
 
 cleanup:
+    // Toujours attendre le processus enfant pour éviter les zombies
+    // même en cas d'erreur avant le waitpid() normal
+    // IMPORTANT: Les pipes doivent être fermés avant waitpid() pour éviter les blocages
+    if (pid > 0 && !child_waited) {
+        // S'assurer que les pipes sont fermés (au cas où on arrive ici avant leur fermeture)
+        // Une fois les pipes fermés, le processus enfant devrait se terminer normalement
+        if (!pipes_closed) {
+            close(stdout_pipe[0]);
+            close(stderr_pipe[0]);
+        }
+        // Attendre le processus (il devrait se terminer rapidement après la fermeture des pipes)
+        // Réessayer en cas d'interruption (EINTR)
+        int status;
+        pid_t waited_pid;
+        do {
+            waited_pid = waitpid(pid, &status, 0);
+        } while (waited_pid < 0 && errno == EINTR);
+        // Ignorer les autres erreurs, on nettoie juste pour éviter les zombies
+    }
     buffer_free(&out_buf);
     buffer_free(&err_buf);
     return result;
@@ -372,10 +411,17 @@ int execute_pipeline_command(const command_t *cmd,
     for (uint32_t i = 0; i < cmd->nb_cmds; i++) {
         pid_t pid = fork();
         if (pid < 0) {
-            // Nettoyer les processus déjà créés
+            // Nettoyer les processus déjà créés pour éviter les zombies
             for (uint32_t j = 0; j < i; j++) {
-                kill(pids[j], SIGTERM);
-                waitpid(pids[j], NULL, 0);
+                if (pids[j] > 0) {
+                    kill(pids[j], SIGTERM);
+                    // Attendre chaque processus, réessayer en cas d'interruption
+                    pid_t waited_pid;
+                    do {
+                        waited_pid = waitpid(pids[j], NULL, 0);
+                    } while (waited_pid < 0 && errno == EINTR);
+                    // Ignorer les autres erreurs (processus déjà terminé, etc.)
+                }
             }
             for (uint32_t j = 0; j < cmd->nb_cmds - 1; j++) {
                 close(pipes[j * 2]);
@@ -443,10 +489,17 @@ int execute_pipeline_command(const command_t *cmd,
     int last_read_fd = (cmd->nb_cmds > 1) ? pipes[(cmd->nb_cmds - 2) * 2] : STDOUT_FILENO;
     if (cmd->nb_cmds > 1) {
         if (read_fd_into_buffer(last_read_fd, &out_buf) < 0) {
-            // Nettoyer
+            // Nettoyer tous les processus pour éviter les zombies
             for (uint32_t i = 0; i < cmd->nb_cmds; i++) {
-                kill(pids[i], SIGTERM);
-                waitpid(pids[i], NULL, 0);
+                if (pids[i] > 0) {
+                    kill(pids[i], SIGTERM);
+                    // Attendre chaque processus, réessayer en cas d'interruption
+                    pid_t waited_pid;
+                    do {
+                        waited_pid = waitpid(pids[i], NULL, 0);
+                    } while (waited_pid < 0 && errno == EINTR);
+                    // Ignorer les autres erreurs (processus déjà terminé, etc.)
+                }
             }
             close(last_read_fd);
             free(pipes);
@@ -459,10 +512,21 @@ int execute_pipeline_command(const command_t *cmd,
     }
 
     // Attendre tous les processus et collecter stderr
+    // IMPORTANT: On doit attendre TOUS les processus pour éviter les zombies
     uint16_t last_exit = 255;
     for (uint32_t i = 0; i < cmd->nb_cmds; i++) {
         int status;
-        if (waitpid(pids[i], &status, 0) < 0) {
+        // Attendre chaque processus jusqu'à ce qu'il se termine
+        // Réessayer en cas d'interruption (EINTR)
+        pid_t waited_pid;
+        do {
+            waited_pid = waitpid(pids[i], &status, 0);
+        } while (waited_pid < 0 && errno == EINTR);
+        
+        if (waited_pid < 0) {
+            // Erreur : le processus n'existe peut-être plus (déjà attendu ailleurs, ECHILD)
+            // ou erreur système autre que EINTR. On continue quand même pour vérifier les autres processus.
+            // Si c'est ECHILD, le processus n'existe plus donc pas de zombie.
             continue;
         }
         if (WIFEXITED(status)) {
