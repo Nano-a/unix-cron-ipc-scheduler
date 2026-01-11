@@ -608,20 +608,62 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
         break;
     }
 
+    // Rouvrir le tube de réponse si nécessaire (il a été fermé après la requête précédente)
+    if (reply_fd < 0) {
+        char reply_path[1024];
+        int len = snprintf(reply_path, sizeof(reply_path), "%s/pipes/erraid-reply-pipe", run_dir);
+        if (len >= 0 && len < (int)sizeof(reply_path)) {
+            // Essayer d'ouvrir en O_WRONLY (écriture seule) avec retry
+            // Le client doit avoir ouvert le tube en lecture avant que nous puissions l'ouvrir en écriture
+            int attempts = 0;
+            const int max_attempts = 1000; // 1000 * 1ms = 1 seconde
+            while (attempts < max_attempts) {
+                reply_fd = open(reply_path, O_WRONLY | O_NONBLOCK);
+                if (reply_fd >= 0) {
+                    // Remettre en mode bloquant pour l'écriture
+                    int flags = fcntl(reply_fd, F_GETFL);
+                    fcntl(reply_fd, F_SETFL, flags & ~O_NONBLOCK);
+                    DEBUG_LOG("[DEBUG] Reply pipe reopened: fd=%d (after %d attempts)\n", reply_fd, attempts + 1);
+                    *reply_fd_ptr = reply_fd;
+                    break;
+                }
+                if (errno != ENXIO) {
+                    // Erreur autre que "pas de lecteur"
+                    DEBUG_LOG("[DEBUG] Failed to reopen reply pipe: %s\n", strerror(errno));
+                    perror("open reply pipe");
+                    free_request(req);
+                    free_response(resp);
+                    return;
+                }
+                // ENXIO = pas encore de lecteur, attendre 1ms et réessayer
+                struct timespec ts = {0, 1000000}; // 1ms
+                nanosleep(&ts, NULL);
+                attempts++;
+            }
+            if (reply_fd < 0) {
+                DEBUG_LOG("[DEBUG] Timeout waiting for client to open reply pipe after %d attempts\n", max_attempts);
+                free_request(req);
+                free_response(resp);
+                return;
+            }
+        }
+    }
+    
     DEBUG_LOG("[DEBUG] Sending response (opcode=%d, anstype=%d, reply_fd=%d)\n", 
               req->opcode, resp->anstype, reply_fd);
     if (send_response(reply_fd, resp) < 0) {
         DEBUG_LOG("[DEBUG] send_response failed: %s\n", strerror(errno));
         perror("send_response");
     } else {
-        DEBUG_LOG("[DEBUG] Response sent successfully, closing reply_fd\n");
-        // Fermer le tube de réponse immédiatement après avoir envoyé la réponse
-        // pour indiquer au client que la réponse est complète (EOF)
-        // Pour un pipe nommé, les données sont déjà dans le buffer du kernel,
-        // donc pas besoin de fsync() qui pourrait bloquer
-        close(reply_fd);
-        *reply_fd_ptr = -1; // Indiquer que le tube est fermé
+        DEBUG_LOG("[DEBUG] Response sent successfully\n");
     }
+    
+    // Toujours fermer le tube de réponse après avoir tenté d'envoyer la réponse
+    // pour indiquer au client que la réponse est complète (EOF)
+    // Le close() envoie automatiquement l'EOF au lecteur
+    DEBUG_LOG("[DEBUG] Closing reply_fd\n");
+    close(reply_fd);
+    *reply_fd_ptr = -1; // Indiquer que le tube est fermé
 
     free_request(req);
     free_response(resp);
@@ -666,25 +708,10 @@ void daemon_loop(const char *run_dir, int request_fd, int reply_fd) {
                 DEBUG_LOG("[DEBUG] request_fd invalid, breaking\n");
                 break;
             }
-            // Rouvrir le tube de réponse si nécessaire (il a été fermé dans handle_request)
-            // On doit le rouvrir AVANT de traiter la requête pour pouvoir répondre
-            if (reply_fd < 0) {
-                char reply_path[1024];
-                int len = snprintf(reply_path, sizeof(reply_path), "%s/pipes/erraid-reply-pipe", run_dir);
-                if (len >= 0 && len < (int)sizeof(reply_path)) {
-                    // Utiliser O_RDWR comme dans open_pipes_daemon pour éviter le blocage
-                    reply_fd = open(reply_path, O_RDWR);
-                    if (reply_fd < 0) {
-                        DEBUG_LOG("[DEBUG] Failed to reopen reply pipe: %s\n", strerror(errno));
-                        // Si on ne peut pas rouvrir, on ne peut pas répondre, donc on skip cette requête
-                        continue;
-                    }
-                    DEBUG_LOG("[DEBUG] Processing client request (reply pipe reopened: fd=%d)\n", reply_fd);
-                }
-            } else {
-                DEBUG_LOG("[DEBUG] Processing client request\n");
-            }
             
+            DEBUG_LOG("[DEBUG] Processing client request\n");
+            
+            // Traiter la requête (qui rouvrira le tube de réponse si nécessaire)
             handle_request(run_dir, request_fd, &reply_fd);
         }
         // ret == 0 signifie timeout, c'est normal, on continue
@@ -808,6 +835,13 @@ int main(int argc, char **argv) {
         g_stop = 1;
         pthread_join(task_thread, NULL);
         return EXIT_FAILURE;
+    }
+
+    // Fermer immédiatement le reply_fd initial pour éviter les problèmes de fermeture du tube
+    // Le tube sera rouvert pour chaque requête dans handle_request()
+    if (reply_fd >= 0) {
+        close(reply_fd);
+        reply_fd = -1;
     }
 
     daemon_loop(run_dir, request_fd, reply_fd);
