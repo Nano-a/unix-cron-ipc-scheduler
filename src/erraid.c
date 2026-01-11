@@ -644,8 +644,9 @@ static void handle_request(const char *run_dir, int request_fd, int *reply_fd_pt
         if (len >= 0 && len < (int)sizeof(reply_path)) {
             // Essayer d'ouvrir en O_WRONLY (écriture seule) avec retry
             // Le client doit avoir ouvert le tube en lecture avant que nous puissions l'ouvrir en écriture
+            // Augmenter le timeout pour valgrind qui ralentit l'exécution
             int attempts = 0;
-            const int max_attempts = 1000; // 1000 * 1ms = 1 seconde
+            const int max_attempts = 5000; // 5000 * 1ms = 5 secondes (augmenté pour valgrind)
             while (attempts < max_attempts) {
                 reply_fd = open(reply_path, O_WRONLY | O_NONBLOCK);
                 if (reply_fd >= 0) {
